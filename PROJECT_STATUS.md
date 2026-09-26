@@ -33,8 +33,7 @@ Game poora khelne layak hai (2 browser tabs = 2 players, ya smoke script). Datab
 - Kuch nahi.
 
 ## Pending
-- Push to GitHub (git history now has 1 commit locally on `master`; no remote yet — need the owner to create the empty GitHub repo, `gh` CLI isn't available in this environment to do it automatically). GitHub username seen in git config: `dhiraj-source`.
-- Then Railway (API+Postgres+Redis) and Vercel (web) dashboard connect + env vars — DEPLOYMENT.md Steps 2-4, owner's one-time login.
+- Railway (API+Postgres+Redis) and Vercel (web) dashboard connect + env vars — DEPLOYMENT.md Steps 2-4, owner's one-time login. (Step 1, GitHub push, is DONE: https://github.com/dhiraj-source/raja-mantri-chor-sipahi, branch main.)
 
 ## Planned
 - Redis for rooms / queue / reconnect sessions / auth tokens / presence (container runs but is unused). Deliberately NOT started: it is a big refactor (async token store, serializable room + GameState storage, cross-server WebSocket broadcast) that only matters for restarts or running more than one API server. Login tokens and rooms are lost on an API restart until then.

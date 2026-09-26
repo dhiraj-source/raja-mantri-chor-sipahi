@@ -1,8 +1,11 @@
 # LAST WORK
 
-## Latest (git commit done)
-Owner said "ok proceed" (deploy). Ran DEPLOYMENT.md Step 1's local part: reviewed the full `git status` for secrets (none), `git add -A`, one root commit (121 files, "Initial commit: full game (RMC-0001 to RMC-0017)"). Working tree is clean. Also found and cleaned up 3 leftover smoke-test accounts (fa_/fb_/fc_) in the dev DB from the earlier Docker verification session (owner's own real accounts dhiraj/anjali/dkumar/athakur/tuntun were left alone).
-Blocked on: no GitHub remote yet, and `gh` CLI isn't installed here, so the empty GitHub repo has to be created by the owner (git config shows their GitHub username is `dhiraj-source`). Once they give a repo URL (or say it's created), next action is `git remote add origin ... && git push -u origin master` (or rename to main first), then walk through DEPLOYMENT.md Steps 2-4 (Railway, Vercel, wiring CORS_ORIGINS).
+## Latest (DEPLOYMENT.md Step 1 complete)
+Owner said "ok proceed" (deploy). Committed everything (2 commits: full game, then a small memory-file update) after checking for secrets. Owner created the empty GitHub repo (`dhiraj-source/raja-mantri-chor-sipahi`) via the browser link given. `git remote add origin` + `git push -u origin main` failed once with a stale cached GitHub credential ("Invalid username or token"); cleared it with `git credential reject` and the retry succeeded (this second attempt is what actually prompted the owner's real GitHub auth). Verified: `git ls-remote origin main` hash matches local HEAD exactly, and the GitHub API shows the repo with `default_branch: main` and a recent `pushed_at`.
+Also cleaned up 3 leftover smoke-test accounts (fa_/fb_/fc_) in the dev DB from the earlier Docker verification session (owner's own real accounts dhiraj/anjali/dkumar/athakur/tuntun were left alone).
+
+## Next
+DEPLOYMENT.md Steps 2-4: Railway (new project from the now-pushed GitHub repo, Dockerfile builder pointed at apps/api/Dockerfile, add Postgres + Redis plugins, set DATABASE_URL/REDIS_URL/CORS_ORIGINS), then Vercel (import same repo, vercel.json handles the build, set VITE_API_URL/VITE_WS_URL to the Railway URL), then update CORS_ORIGINS on Railway with the real Vercel URL. All owner's-login steps; ask them to go through DEPLOYMENT.md and report back the Railway URL once generated.
 
 ## Before that (RMC-0017)
 Owner asked for a deployment file, but first wanted to discuss 5 questions (Docker? Vercel free plan? GitHub/Bitbucket? containers? auto-deploy/MCP?). Discussed each in Hinglish, flagged the key blocker myself: Vercel is serverless and cannot run our WebSocket + in-memory-state API, so it can only host the web frontend. Asked the owner 3 real decisions via AskUserQuestion: API host, git host, whether to provision Redis now. Answers: Railway (API), GitHub, provision Redis now.
