@@ -4,8 +4,9 @@
 Raja Mantri Chor Sipahi
 
 ## Current Phase
-PHASES 1–4 done (Foundation, Rooms, Core game, Reconnection) + parts of Social/Languages that need no database.
-Next big block = accounts + database (needs Docker/PostgreSQL running).
+See `DEVELOPMENT/` for the phase-tracking convention.
+- **PHASE 1 (Foundation to Launch): COMPLETE** — `DEVELOPMENT/PHASE_1_FOUNDATION_TO_LAUNCH/STATUS.md`
+- **PHASE 2 (Bots, Mixed Rooms, Voice): IN PROGRESS** — `DEVELOPMENT/PHASE_2_BOTS_AND_VOICE/STATUS.md`
 
 ## Overall Status
 **LIVE**: https://raja-mantri-chor-sipahi-five.vercel.app (verified working end-to-end in a real browser, real production API). Also still fully playable locally (2 browser tabs = 2 players, ya smoke script).

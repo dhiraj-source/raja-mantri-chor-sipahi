@@ -24,6 +24,14 @@ These files are the project's persistent memory.
 
 NEVER treat a new request as a fresh project.
 
+## DEVELOPMENT PHASES (added in Phase 2)
+
+The project is tracked in phases under `DEVELOPMENT/PHASE_N_.../STATUS.md`
+(see `DEVELOPMENT/README.md` for the convention). Before starting work, also check
+the **current phase's STATUS.md** for its feature checklist. Update that checklist
+as features are built. Never mark a phase "COMPLETE" while it still has unchecked
+items — new items can be added to an in-progress phase at any time.
+
 ## SAFE DEVELOPMENT RULE
 
 Before coding:
