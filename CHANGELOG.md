@@ -710,3 +710,47 @@ New client->server: `PLAY_WITH_BOTS`, `ADD_BOT`, `REMOVE_BOT`. `QUEUE_STATE` pay
 - A room with a disconnected human host and only bots left still waits out the normal reconnect grace before being cleaned up (bots don't shortcut that).
 - Sound packs (item 4) and live voice chat (item 5) are not implemented — see DEVELOPMENT/PHASE_2_BOTS_AND_VOICE/STATUS.md for their status.
 
+# RMC-0020
+
+## Feature
+Phase 2: Live voice chat (WebRTC mesh, public STUN only, per-player mute/unmute)
+
+## Status
+COMPLETE for this item (see DEVELOPMENT/PHASE_2_BOTS_AND_VOICE/STATUS.md — phase itself stays IN PROGRESS: sound packs (item 4) still waiting on owner-supplied audio files, and more features may still be added to this phase).
+
+## What changed
+- shared-types: new `ClientMessage`s `VOICE_SIGNAL` ({toPlayerId, signal}) and `VOICE_MUTE` ({muted}); new `ServerMessage`s `VOICE_SIGNAL` ({fromPlayerId, signal}) and `VOICE_MUTE` ({playerId, muted}). `signal` is an opaque WebRTC offer/answer/ICE payload — the server never inspects it.
+- game-engine: no changes — voice chat has nothing to do with game rules.
+- api/rooms/rooms.gateway.ts: `voiceSignal`/`voiceMute` handlers relay the payload verbatim to the target player (or the whole room for mute) only if both are in the same room — otherwise silently dropped. `MAX_MESSAGES_PER_SECOND` default raised 20 -> 40 and `MAX_PAYLOAD_BYTES` default raised 4096 -> 16384 (SDP offers/answers, especially with ICE candidates bundled, can be a few KB).
+- web/src/voice/webrtc.ts (new): `VoiceRoom` class — one `RTCPeerConnection` per other human player in the room (mesh), deterministic glare-avoidance (`shouldInitiate`: the lexicographically smaller `PlayerId` always sends the offer), ICE candidates queued until the remote description is set, `PeerConnectionFactory` is dependency-injected so it's unit-testable without real WebRTC.
+- web/src/voice/useVoiceChat.ts (new): React hook — asks for the mic on "Join voice chat" (default muted), keeps peer connections in sync with the room's current human+connected players, plays remote audio via hidden `<audio>` elements, exposes mic status / mute toggle / per-peer connection state.
+- web/src/components/VoiceBar.tsx (new): UI — join button (with permission-denied / unsupported-browser messages), mute/unmute, list of other players with connection state and a mute icon when they're muted. Bots never appear in this list.
+- web/src/net/useGameSocket.ts: added a raw-message side channel (`onRawMessage`) so `VOICE_SIGNAL`/`VOICE_MUTE` don't have to go through the shared app-state reducer (they're high-frequency and app-state shouldn't re-render on every ICE candidate).
+- web/src/App.tsx: wires `useVoiceChat` and renders `<VoiceBar>` whenever the player is in a room.
+- apps/api/scripts/smoke-ws.mjs: new "Voice signaling" section (same-room relay is byte-for-byte, cross-room is blocked, VOICE_MUTE broadcasts to the room); also fixed the pre-existing abuse-protection "oversized message" check (see Known limitations).
+
+## Reason
+Owner's Phase 2 request #5: players should be able to talk live, and mute/unmute themselves.
+
+## Database
+None.
+
+## API
+None (HTTP unchanged).
+
+## WebSocket
+New: `VOICE_SIGNAL` (client<->server<->client, opaque relay) and `VOICE_MUTE` (client->server, server broadcasts to room). `MAX_MESSAGES_PER_SECOND` 20->40, `MAX_PAYLOAD_BYTES` 4096->16384 (both env-overridable, unchanged defaults for everything else).
+
+## Tests
+- engine 37 (unchanged) + api 132 (unchanged — voice relay is thin enough that the existing gateway tests plus the smoke test cover it) + web 102 (+9 `voice.test.ts` unit tests against a fake `RTCPeerConnection`, +9 `voice-ui.test.tsx` for `VoiceBar`) = 271 pass. Lint + build clean.
+- Real bug caught and fixed by a unit test before it ever reached a browser: `VoiceRoom.connectTo`, when called reactively after receiving an incoming offer, still sent its own offer if it happened to also be the lexicographically-smaller id — two offers crossing instead of one offer + one answer (a WebRTC "glare" bug). Fixed by always answering (never re-offering) on the reactive path.
+- Real bug caught by the real-server smoke test, not the app but the test itself: raising `MAX_PAYLOAD_BYTES` to 16384 (needed for SDP) silently broke the existing "10KB message gets the connection closed" abuse-protection check, because 10KB is now under the new limit — the server no longer closes the connection, so the smoke script hung forever awaiting a `close` event that never comes. This is not a security regression (16KB per message is still a small, reasonable cap), just a stale test assumption; fixed by sending 20KB in that check (comfortably over the current limit) instead of 10KB.
+- Verified for real, in three independent ways: (1) unit tests with a fully fake, dependency-injected `RTCPeerConnection` (no real network); (2) the real-server smoke test, including the new voice-signaling section and the fixed abuse-protection section, ran end to end against a locally-built, locally-running API with `SMOKE TEST PASSED` printed; (3) two real headless-Chrome browsers (`--use-fake-device-for-media-stream --use-fake-ui-for-media-stream`) opened the actual production UI, joined the same room and joined voice chat, and completed genuine ICE/DTLS negotiation with zero console errors — real WebRTC, not a mocked path.
+- Smoke-test accounts cleaned from the dev database afterward (35 rows: `p1`-`p4`/`fa`/`fb`/`fc` prefixes from this round of testing).
+
+## Known limitations
+- STUN only, no TURN: players behind a strict/corporate NAT (~5-10% estimated) won't be able to connect their voice peer, per the owner's explicit free/simple choice. Text chat/game itself is unaffected.
+- No push-to-talk, no volume/input-device picker, no visual "who's speaking" indicator — just join/mute/unmute.
+- Voice never reconnects automatically if a peer connection drops mid-call (e.g. network blip) short of a full room re-sync (rejoining triggers `syncPeers` again); there's no dedicated ICE-restart path yet.
+- Sound packs (item 4) are still not implemented — waiting on the owner's own audio files. Phase 2 is not "complete"; more features can still be added to it.
+

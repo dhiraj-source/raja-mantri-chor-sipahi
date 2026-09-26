@@ -289,7 +289,14 @@ export type ClientMessage =
   /** Dost ko apne room me bulao (login + lobby + dost online). */
   | { event: 'INVITE_FRIEND'; data: { accountId: string } }
   /** Login (HTTP) ke baad socket ko account se jodta hai. null = logout. */
-  | { event: 'AUTHENTICATE'; data: { authToken: string | null } };
+  | { event: 'AUTHENTICATE'; data: { authToken: string | null } }
+  /**
+   * Voice chat (WebRTC) ka signaling. Server sirf relay karta hai (sirf usi room ke
+   * player ko), `signal` ka andar kya hai server ko pata nahi hota (SDP offer/answer/ICE).
+   */
+  | { event: 'VOICE_SIGNAL'; data: { toPlayerId: PlayerId; signal: unknown } }
+  /** Apna mute/unmute room ke baaki players ko batao. */
+  | { event: 'VOICE_MUTE'; data: { muted: boolean } };
 
 /** Room me bheji ja sakne wali reactions (server isi list se validate karta hai). */
 export const REACTIONS = ['😂', '😡', '👏', '😱', '🤔', '❤️'] as const;
@@ -318,4 +325,8 @@ export type ServerMessage =
   | { event: 'AUTH_STATE'; data: { displayName: string } | null }
   /** Game khatam hone par server ne is (logged-in) player ko kya diya. */
   | { event: 'GAME_REWARD'; data: GameReward }
+  /** Kisi player ne voice signal bheja (sirf usi room ko relay hota hai). */
+  | { event: 'VOICE_SIGNAL'; data: { fromPlayerId: PlayerId; signal: unknown } }
+  /** Kisi player ka mute/unmute (sirf usi room ko). */
+  | { event: 'VOICE_MUTE'; data: { playerId: PlayerId; muted: boolean } }
   | { event: 'ERROR'; data: { code: RoomErrorCode; message: string } };

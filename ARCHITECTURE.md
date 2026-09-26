@@ -139,6 +139,37 @@ apps/api/src/rooms:
 - Host is always human: if the host leaves, host transfers to a human if one remains, or the
   room is deleted if only bots are left (avoids orphaned bot-only rooms).
 
+## Voice chat (RMC-0020, Phase 2)
+
+- Signaling-only relay: audio itself never touches the server. `RoomsGateway` relays
+  `VOICE_SIGNAL` (opaque WebRTC offer/answer/ICE candidate) to one target player, and
+  `VOICE_MUTE` to the whole room, checking only that sender and target share a room —
+  it never parses or validates the SDP payload.
+- Mesh topology: every connected human player in a room opens a direct `RTCPeerConnection`
+  to every other connected human player (up to 4 players = up to 6 peer connections room-
+  wide). Bots have no socket and are never included.
+- Glare avoidance: WebRTC has no built-in rule for who offers when both sides could
+  initiate at once. `shouldInitiate(a, b)` picks the lexicographically smaller `PlayerId`
+  as the offerer; the other side only ever answers, even if it independently decides to
+  connect at the same moment (`VoiceRoom.connectTo` takes an explicit `initiate` flag so
+  the reactive "an offer just arrived" path can never accidentally send its own offer too).
+  ICE candidates that arrive before the remote description is set are queued and applied
+  once it is.
+- `packages/shared-types`: `VoiceRoom`'s `PeerConnectionFactory` is dependency-injected
+  (`defaultPeerConnectionFactory` in production, a fake in tests) so the whole state
+  machine — offer/answer/ICE handling, mute, peer add/remove — is unit-testable without a
+  real browser or network.
+- STUN only (Google's public STUN server), no TURN server: free and simple, per the
+  owner's explicit choice. Trade-off: players behind a strict/symmetric NAT or some
+  corporate networks (~5-10% estimated) won't be able to complete the peer connection;
+  adding TURN later would need a running TURN server (coturn or a paid provider) and is
+  independent of everything else here.
+- `MAX_PAYLOAD_BYTES` (WebSocket gateway) raised 4096 -> 16384 to fit SDP offers/answers,
+  which can exceed 4KB once ICE candidates are bundled in. This is a single global
+  per-frame cap (`ws`'s own `maxPayload`, closes the connection with code 1009 over the
+  limit) — there's deliberately no separate, smaller limit for non-signaling messages,
+  since 16KB is still a small, reasonable abuse-protection ceiling either way.
+
 ## Characters and shop (RMC-0013)
 
 - The catalog (ids, emoji, price, minLevel) lives in shared-types so server and browser see the same list; only the server decides purchases.

@@ -70,6 +70,15 @@ export const en = {
   'hint.SIPAHI': 'You are the Sipahi. Stay hidden while the Mantri hunts the Chor.',
   'hint.CHOR': 'You are the Chor. Escape the Mantri!',
 
+  'voice.title': 'Voice chat',
+  'voice.join': 'Join voice chat',
+  'voice.requesting': 'Asking for microphone…',
+  'voice.denied': 'Microphone permission was denied.',
+  'voice.unsupported': 'Voice chat is not supported in this browser.',
+  'voice.muted': 'Muted',
+  'voice.talking': 'Talking',
+  'voice.alone': "No one else here yet — you'll hear them when they join.",
+
   'audio.mute': 'Mute sounds',
   'audio.unmute': 'Unmute sounds',
   'shop.title': 'Character shop',
@@ -261,6 +270,15 @@ export const hi: Record<MessageKey, string> = {
   'hint.MANTRI': 'आप मंत्री हैं। चोर को पहचानिए!',
   'hint.SIPAHI': 'आप सिपाही हैं। छुपे रहिए, मंत्री चोर ढूंढ रहा है।',
   'hint.CHOR': 'आप चोर हैं। मंत्री से बचिए!',
+
+  'voice.title': 'वॉइस चैट',
+  'voice.join': 'वॉइस चैट जॉइन करें',
+  'voice.requesting': 'माइक्रोफ़ोन मांगा जा रहा है…',
+  'voice.denied': 'माइक्रोफ़ोन की अनुमति नहीं मिली।',
+  'voice.unsupported': 'इस ब्राउज़र में वॉइस चैट सपोर्ट नहीं है।',
+  'voice.muted': 'म्यूट',
+  'voice.talking': 'बोल रहे हैं',
+  'voice.alone': 'अभी यहाँ कोई और नहीं है — जॉइन करते ही सुनाई देगा।',
 
   'audio.mute': 'आवाज़ें बंद करें',
   'audio.unmute': 'आवाज़ें चालू करें',

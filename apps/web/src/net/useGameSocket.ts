@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react';
-import { RECONNECT_TOKEN_PARAM, type ClientMessage } from '@rmc/shared-types';
+import { RECONNECT_TOKEN_PARAM, type ClientMessage, type ServerMessage } from '@rmc/shared-types';
 import {
   MAX_RECONNECT_ATTEMPTS,
   REPLACED_CLOSE_CODE,
@@ -37,6 +37,9 @@ export function useGameSocket() {
   const [state, dispatch] = useReducer(clientReducer, initialClientState);
   const socketRef = useRef<WebSocket | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Kuch messages (voice signaling) reducer/state me nahi jaate, seedha yahan se sunte hain —
+  // taaki har ICE candidate par poora app re-render na ho.
+  const rawListenersRef = useRef(new Set<(message: ServerMessage) => void>());
   // Purane socket ke late events ko ignore karne ke liye.
   const attemptIdRef = useRef(0);
   const retriesRef = useRef(0);
@@ -63,6 +66,7 @@ export function useGameSocket() {
         retriesRef.current = 0;
       }
       dispatch({ type: 'SERVER', message });
+      for (const listener of rawListenersRef.current) listener(message);
     };
     socket.onclose = (e) => {
       if (!current()) return;
@@ -102,5 +106,11 @@ export function useGameSocket() {
 
   const dismissInvite = useCallback((key: number) => dispatch({ type: 'DISMISS_INVITE', key }), []);
 
-  return { state, send, reconnect, dismissError, expireReaction, dismissInvite };
+  /** Listener register karo (VOICE_SIGNAL jaisi cheezein). Cleanup function wapas milta hai. */
+  const onRawMessage = useCallback((listener: (message: ServerMessage) => void) => {
+    rawListenersRef.current.add(listener);
+    return () => rawListenersRef.current.delete(listener);
+  }, []);
+
+  return { state, send, reconnect, dismissError, expireReaction, dismissInvite, onRawMessage };
 }

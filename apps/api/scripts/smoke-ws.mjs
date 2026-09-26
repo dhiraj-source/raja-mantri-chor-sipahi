@@ -22,6 +22,8 @@ class Client {
     this.friendsChanged = 0;
     this.invites = [];
     this.queueSizes = [];
+    this.voiceSignals = [];
+    this.voiceMutes = [];
     this.waiters = [];
     this.ws = new WebSocket(token ? `${URL}?token=${token}` : URL);
     this.ready = new Promise((resolve) => {
@@ -44,6 +46,8 @@ class Client {
           this.queueSizes.push(msg.data ? msg.data.size : null);
           this.queueNames = msg.data ? msg.data.names : null;
         }
+        if (msg.event === 'VOICE_SIGNAL') this.voiceSignals.push(msg.data);
+        if (msg.event === 'VOICE_MUTE') this.voiceMutes.push(msg.data);
         this.waiters = this.waiters.filter((w) => !w());
       });
     });
@@ -273,6 +277,37 @@ for (let round = 1; round <= 4; round++) {
 assert(true, 'host+bots ka mixed room bhi poora khela gaya');
 host.ws.close();
 
+// ---- Voice signaling: sirf relay (server SDP/ICE ke andar kabhi nahi dekhta) ----
+const v1 = new Client('V1');
+const v2 = new Client('V2');
+const v3 = new Client('V3'); // alag room me — cross-room relay reject hona chahiye
+await Promise.all([v1, v2, v3].map((x) => x.ready));
+v1.send('CREATE_ROOM', { name: 'V1' });
+await v1.waitFor(() => v1.room, 'v1 room created');
+v2.send('JOIN_ROOM', { code: v1.room.code, name: 'V2' });
+await v2.waitFor(() => v2.room?.players.length === 2, 'v2 joined v1 room');
+v3.send('CREATE_ROOM', { name: 'V3' }); // apna alag room
+
+const fakeOffer = { kind: 'offer', sdp: { type: 'offer', sdp: 'v=0 fake sdp for smoke test' } };
+v1.send('VOICE_SIGNAL', { toPlayerId: v2.id, signal: fakeOffer });
+await v2.waitFor(() => v2.voiceSignals.length === 1, 'v2 ko v1 ka signal mila');
+assert(
+  v2.voiceSignals[0].fromPlayerId === v1.id && JSON.stringify(v2.voiceSignals[0].signal) === JSON.stringify(fakeOffer),
+  'signal jaisa bheja gaya waisa hi relay hua (server ne SDP nahi chheda)',
+);
+
+v3.send('VOICE_SIGNAL', { toPlayerId: v2.id, signal: fakeOffer }); // alag room se
+await new Promise((r) => setTimeout(r, 300));
+assert(v2.voiceSignals.length === 1, 'alag room ke player ka signal relay nahi hua (cross-room blocked)');
+
+v1.send('VOICE_MUTE', { muted: false });
+await v2.waitFor(() => v2.voiceMutes.length === 1, 'v2 ko v1 ka mute-state mila');
+assert(
+  v2.voiceMutes[0].playerId === v1.id && v2.voiceMutes[0].muted === false,
+  'VOICE_MUTE room ke baaki logon ko broadcast hota hai',
+);
+[v1, v2, v3].forEach((x) => x.ws.close());
+
 // ---- Vote: WAIT jeeta -> grace dobara -> naya vote; gayab wapas aaya -> vote khatam; time out -> WAIT ----
 const awayRole = qs[3].game.myRole;
 const awayId = qs[3].id;
@@ -477,12 +512,14 @@ assert(ov.friends.length === 0, 'dono ki list se dosti hat gayi');
 [ca, outsider, guestInviter].forEach((x) => x.ws.close());
 
 // ---- Abuse protection ----
+// Payload size server ke MAX_PAYLOAD_BYTES (voice SDP ke liye 16KB tak) se bada hona chahiye,
+// warna server ise valid maan kar process kar leta hai aur connection kabhi band nahi hota.
 const closed = (client) => new Promise((resolve) => client.ws.once('close', (code) => resolve(code)));
 const big = new Client('Big');
 await big.ready;
 const bigClosed = closed(big);
-big.ws.send(JSON.stringify({ event: 'CREATE_ROOM', data: { name: 'x'.repeat(10_000) } }));
-assert((await bigClosed) === 1009, 'bahut bada message (10KB) par connection band (code 1009)');
+big.ws.send(JSON.stringify({ event: 'CREATE_ROOM', data: { name: 'x'.repeat(20_000) } }));
+assert((await bigClosed) === 1009, 'bahut bada message (20KB) par connection band (code 1009)');
 
 const spammer = new Client('Spam');
 await spammer.ready;

@@ -28,10 +28,14 @@ const RECONNECT_GRACE_MS = Number(process.env.RECONNECT_GRACE_MS ?? 60_000);
 /** Grace ke baad baaki players ke paas vote ke liye itna time. */
 const VOTE_DURATION_MS = Number(process.env.VOTE_DURATION_MS ?? 30_000);
 
-/** Spam se bachav: ek socket ek second me itne messages se zyada bheje to connection band. */
-const MAX_MESSAGES_PER_SECOND = Number(process.env.MAX_MESSAGES_PER_SECOND ?? 20);
-/** Ek message ka max size (bytes). Isse bada frame aaye to ws connection band kar deta hai. */
-const MAX_PAYLOAD_BYTES = 4096;
+/**
+ * Spam se bachav: ek socket ek second me itne messages se zyada bheje to connection band.
+ * Voice chat (WebRTC) shuru hote waqt kai ICE candidates thodi der me aa sakte hain,
+ * isliye normal gameplay se zyada rakha hai.
+ */
+const MAX_MESSAGES_PER_SECOND = Number(process.env.MAX_MESSAGES_PER_SECOND ?? 40);
+/** Ek message ka max size (bytes). SDP (voice signaling) 4KB se bada ho sakta hai. */
+const MAX_PAYLOAD_BYTES = Number(process.env.MAX_PAYLOAD_BYTES ?? 16_384);
 /** Bot Mantri ka guess itni der (ms) me aata hai — insaan jaisa lagne ke liye thoda ruk kar. */
 const BOT_GUESS_DELAY_MS = Number(process.env.BOT_GUESS_DELAY_MS ?? 1800);
 
@@ -303,6 +307,37 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
         this.send(id, { event: 'REACTION', data: { playerId, emoji } });
       }
     });
+  }
+
+  /**
+   * Voice chat signaling (SDP offer/answer, ICE candidates). Server sirf relay karta hai —
+   * `signal` ke andar kya hai kabhi nahi dekhta, bas ye check karta hai ki dono ek hi room me hain.
+   * Bots ke paas socket hi nahi hota, isliye unhe kabhi kuch nahi milega (safe).
+   */
+  @SubscribeMessage('VOICE_SIGNAL')
+  voiceSignal(
+    @ConnectedSocket() socket: WebSocket,
+    @MessageBody() body: { toPlayerId?: string; signal?: unknown },
+  ): void {
+    const playerId = this.playerOfSocket.get(socket);
+    const to = body?.toPlayerId;
+    if (!playerId || typeof to !== 'string') return;
+    const code = this.rooms.getRoomCodeOf(playerId);
+    if (!code || code !== this.rooms.getRoomCodeOf(to)) return; // dono same room me hone chahiye
+    this.send(to, { event: 'VOICE_SIGNAL', data: { fromPlayerId: playerId, signal: body.signal } });
+  }
+
+  /** Apna mute/unmute room ke baaki (bots ke alawa) sabko batao. */
+  @SubscribeMessage('VOICE_MUTE')
+  voiceMute(@ConnectedSocket() socket: WebSocket, @MessageBody() body: { muted?: boolean }): void {
+    const playerId = this.playerOfSocket.get(socket);
+    if (!playerId) return;
+    const code = this.rooms.getRoomCodeOf(playerId);
+    if (!code) return;
+    const muted = Boolean(body?.muted);
+    for (const id of this.rooms.getPlayerIds(code)) {
+      if (id !== playerId) this.send(id, { event: 'VOICE_MUTE', data: { playerId, muted } });
+    }
   }
 
   @SubscribeMessage('LEAVE_ROOM')

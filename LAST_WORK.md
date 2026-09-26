@@ -1,55 +1,63 @@
 # LAST WORK
 
-## Latest (RMC-0019 — Phase 2 kickoff: bots)
-Owner started Phase 2 with 5 asks: (1) quick play with bots, (2) mixed human+bot rooms with
-queue names shown, (3) sound/voice packs, (4) live voice chat. First set up
-`DEVELOPMENT/PHASE_1_FOUNDATION_TO_LAUNCH/STATUS.md` (archived, COMPLETE) and
-`DEVELOPMENT/PHASE_2_BOTS_AND_VOICE/STATUS.md` (new, IN PROGRESS, full checklist) per the
-owner's explicit ask for a phase-tracking folder structure. Root CLAUDE.md/PROJECT_STATUS.md
-point at these now; the 5-file read-before-work contract is unchanged.
+## Latest (RMC-0020 — Phase 2: live voice chat)
+Owner said "procced" after RMC-0019 (bots) shipped — next unblocked Phase 2 item was #5,
+live voice chat (#4 sound packs stays blocked, owner hasn't sent audio files yet). Built
+WebRTC mesh voice chat, sirf public STUN (owner ka pehle se confirmed decision, see
+DEVELOPMENT/PHASE_2_BOTS_AND_VOICE/STATUS.md):
 
-Asked the owner 2 real decisions before touching the ambiguous items:
-- Sound packs (real PUBG-style voice-lines are copyrighted) -> **owner will supply their own
-  audio files** (not provided yet — this item is WAITING, not started).
-- Live voice chat architecture -> **WebRTC mesh, public STUN only** (free, simplest; not
-  started yet, it's a big feature on its own).
+- shared-types: `VOICE_SIGNAL` (client<->server<->client, opaque offer/answer/ICE payload)
+  aur `VOICE_MUTE` (client->server->room) messages.
+- RoomsGateway: dono ko relay karta hai (sirf same-room check karta hai, SDP ke andar kabhi
+  nahi jhaakta). `MAX_PAYLOAD_BYTES` 4096->16384 aur `MAX_MESSAGES_PER_SECOND` 20->40 badhaya
+  (SDP bada ho sakta hai, ICE candidates bhi bar-bar aate hain).
+- web/src/voice/webrtc.ts: `VoiceRoom` — room ke har human se ek mesh connection, glare
+  (dono taraf offer) se bachne ke liye chhoti `PlayerId` wala hi offer bhejta hai.
+- web/src/voice/useVoiceChat.ts + components/VoiceBar.tsx: mic on/off, mute/unmute, peer
+  status list (bots kabhi list me nahi aate — unke paas socket hi nahi hota).
+- App.tsx me wire kiya: room me ho to VoiceBar dikhta hai.
 
-Then implemented items 1-3 (bots + mixed rooms + queue names) fully:
-- shared-types: `RoomPlayerView.isBot`, `QUEUE_STATE` now carries names, `PLAY_WITH_BOTS` /
-  `ADD_BOT` / `REMOVE_BOT` messages, `BOT_NOT_FOUND` error.
-- RoomsService: bot creation/removal (host only, lobby only), `playWithBots` (one-shot solo
-  flow), `getBotMantriTask` (server peeks real roles to find a bot Mantri + valid guesses),
-  auto room cleanup when only bots remain, host never becomes a bot.
-- RoomsGateway: new message handlers + a scheduled bot auto-guess (`BOT_GUESS_DELAY_MS`,
-  default 1800ms) whenever a round starts with a bot as Mantri.
-- MatchmakingService: `waitingNames()`.
-- web: "Play with bots" button on Home, BOT tag + add/remove buttons in Lobby, names shown
-  in the queue screen, English + Hindi text.
+**Do real bugs pakde gaye, dono testing se, guess se nahi:**
+1. **WebRTC glare bug** (asli app bug): jab kisi ka offer aata tha aur hum reactively
+   answer bana rahe hote the, agar hamari id chhoti hoti (jo initiate karti hai) to code
+   apna offer bhi bhej deta tha — matlab do offers cross ho jaate, connection kabhi nahi
+   banti. Unit test se pakda gaya, fix: reactive path hamesha sirf answer banata hai,
+   kabhi apna offer nahi bhejta.
+2. **Smoke test hang** (test bug, app bug nahi): `MAX_PAYLOAD_BYTES` 16KB karne se purana
+   abuse-protection check ("10KB ka bada message bhejo, connection band hona chahiye")
+   todh gaya — 10KB ab naye 16KB limit se chhota tha, server use normal maan kar process
+   kar leta tha, connection kabhi band nahi hota, script `await` par hamesha ke liye ruk
+   jaati thi (na error, na timeout khud se — sirf hang). Do baar isi jagah phas gaya
+   (pehle apne hi galat "process stuck hai" andaaze se kill kiya, phir dobara 5-min
+   Monitor se bhi wahi jagah). Root cause samajhne ke baad fix simple tha: test ka payload
+   20KB kar diya (naye limit se bada), taaki check phir se meaningful ho.
 
-**Real bug caught by testing, not guessed at:** `addBot` initially forgot to register the bot
-in the internal `roomOfPlayer` lookup — a bot becoming Mantri would have made `submitGuess`
-throw "not in a room" and hung that round forever. The new unit test for
-`getBotMantriTask`/`submitGuess` caught it immediately; fixed by also setting
-`roomOfPlayer` (and clearing it) wherever bots are added/removed/forgotten.
+**Verified for real, teen tarike se:**
+1. Unit tests: `apps/web/test/voice.test.ts` (9, fake `RTCPeerConnection`, koi real network
+   nahi) + `voice-ui.test.tsx` (9, `VoiceBar` component).
+2. Real-server smoke test (`scripts/smoke-ws.mjs`), naya "Voice signaling" section (same-room
+   relay verbatim, cross-room block, mute broadcast) + poora baaki suite — locally built,
+   locally running API ke against, poora "SMOKE TEST PASSED" tak pahuncha.
+3. Do asli headless-Chrome browsers (`--use-fake-device-for-media-stream` se nakli mic,
+   permission prompt ke bina) ne real production UI khola, same room join kiya, voice join
+   kiya, aur asli ICE/DTLS negotiate karke connect ho gaye — zero console errors. Ye sabse
+   strong proof hai ki feature browser me sach me chalta hai, mocked path nahi.
 
-**Verified for real, not just written:**
-- 253 unit tests pass (37 engine + 132 api [+10 bot tests, +1 matchmaking] + 84 web
-  [+7 bot-UI tests]). Lint + build clean.
-- Extended `scripts/smoke-ws.mjs` and ran it against a real running server: solo player vs
-  3 bots plays a full 4-round game with the bot Mantri auto-guessing every time (zero human
-  guesses needed); a host builds a mixed room (add 3 bots, remove one, re-add one, play a
-  full game); queue reports names not just a count. Found and fixed two race conditions in
-  the *smoke script itself* while doing this (checking round state before the new round's
-  data arrived; forgetting to send NEXT_ROUND after the final round). Cleaned up the
-  smoke-test accounts from the dev database afterward.
+271 unit tests pass (37 engine + 132 api + 102 web). Build + lint clean.
 
 ## Current phase
-PHASE 2 (DEVELOPMENT/PHASE_2_BOTS_AND_VOICE/STATUS.md) IN PROGRESS: 3/5 listed items done.
-Remaining: sound packs (waiting on owner's audio files) and live voice chat (not started,
-scoped as WebRTC mesh + STUN).
+PHASE 2 (DEVELOPMENT/PHASE_2_BOTS_AND_VOICE/STATUS.md) IN PROGRESS: 4/5 listed items done
+(bots, mixed rooms, queue names, voice chat). Sirf item 4 (sound packs) baaki hai, aur wo
+poori tarah owner par depend karta hai. **Phase khatam nahi hui hai** — owner ne saaf kaha
+tha ki is phase me aur features add ho sakte hain, to jab tak owner khud na kahe, "COMPLETE"
+nahi likhna (STATUS.md me ye rule likha hua hai).
 
 ## Next step
-Ask the owner: send the audio files for sound packs (and what folder/naming convention
-they'd like, or let me propose one), and/or say when to start on the WebRTC voice chat
-feature (it's a substantial standalone piece: signaling over the existing WebSocket gateway,
-RTCPeerConnection management in the browser, mute/unmute UI, per-room mesh for up to 4 peers).
+Do cheezein owner par pending hain:
+1. Sound packs (item 4): apne .mp3/audio files bhejo (animal sounds, PUBG-style voice
+   lines) — jab milein, folder/naming convention design karke wire karenge.
+2. Voice chat try karo (do phone/browser tabs se ek room me, mic on karo) aur bata do kaisa
+   laga — koi aur voice-related feature chahiye to (push-to-talk, speaking indicator, TURN
+   server strict-NAT users ke liye) bata sakte ho, phase abhi bhi open hai.
+
+Koi code action mere taraf se pending nahi hai jab tak owner in do me se kuch na kahe.

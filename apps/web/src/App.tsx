@@ -17,6 +17,8 @@ import { Lobby } from './components/Lobby';
 import { QueueScreen } from './components/QueueScreen';
 import { ReactionFeed } from './components/Reactions';
 import { Button, Card, ErrorBanner } from './components/ui';
+import { VoiceBar } from './components/VoiceBar';
+import { useVoiceChat } from './voice/useVoiceChat';
 
 /**
  * Browser sirf dikhata hai aur actions bhejta hai.
@@ -24,7 +26,7 @@ import { Button, Card, ErrorBanner } from './components/ui';
  */
 export function App() {
   const { t } = useI18n();
-  const { state, send, reconnect, dismissError, expireReaction, dismissInvite } = useGameSocket();
+  const { state, send, reconnect, dismissError, expireReaction, dismissInvite, onRawMessage } = useGameSocket();
   const { room, game, queue, playerId, connection, error, reactions, reward, invites, friendsVersion } = state;
   const reconnecting = connection === 'reconnecting';
   const auth = useAuth();
@@ -76,6 +78,15 @@ export function App() {
   const react = (emoji: Reaction) => send({ event: 'REACTION', data: { emoji } });
   const leave = () => send({ event: 'LEAVE_ROOM' });
   const nameOf = (id: string) => room?.players.find((p) => p.id === id)?.name ?? '?';
+
+  // Live voice chat: room me hote hi kaam karta hai (Lobby ya Game dono me), bots ke saath kabhi nahi.
+  const voice = useVoiceChat({
+    myId: playerId,
+    players: room?.players ?? null,
+    send: (toPlayerId, signal) => send({ event: 'VOICE_SIGNAL', data: { toPlayerId, signal } }),
+    sendMute: (muted) => send({ event: 'VOICE_MUTE', data: { muted } }),
+    onRawMessage,
+  });
 
   let screen;
   if (connection === 'connecting' || (reconnecting && !room)) {
@@ -196,6 +207,20 @@ export function App() {
         closeLabel={t('app.close')}
         onClose={dismissError}
       />
+      {room && (
+        <div className="mb-4">
+          <VoiceBar
+            players={room.players}
+            myId={playerId}
+            micStatus={voice.micStatus}
+            muted={voice.muted}
+            peerStates={voice.peerStates}
+            remoteMuted={voice.remoteMuted}
+            onJoin={() => void voice.join()}
+            onToggleMute={voice.toggleMute}
+          />
+        </div>
+      )}
       {screen}
       {room && <ReactionFeed items={reactions} nameOf={nameOf} onExpire={expireReaction} />}
     </main>

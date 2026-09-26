@@ -17,7 +17,7 @@ ek-doosre se awaaz se jud sakein.
 | 2 | Room create: host bots se khaali seats bhar sake | ☑ DONE | RMC-0019 |
 | 3 | Lobby/queue me connected/waiting players ke **naam** dikhein (sirf count nahi) | ☑ DONE | RMC-0019 |
 | 4 | Sound packs: animal sounds + voice-line style reactions | ⏸ WAITING ON OWNER | — |
-| 5 | Live voice chat (WebRTC mesh, STUN only), per-player mute/unmute | ☐ TODO (decided, not started) | — |
+| 5 | Live voice chat (WebRTC mesh, STUN only), per-player mute/unmute | ☑ DONE | RMC-0020 |
 | — | *(aage jo bhi naye features aayenge, yahan neeche add honge)* | | |
 
 ## Decisions (confirmed by owner)
@@ -30,8 +30,7 @@ inhe kis naam/folder me daalna hai (convention) yahan likha jayega, phir wire-up
 ### #5 — Live voice chat: **WebRTC mesh, sirf public STUN (free), koi TURN nahi**
 Owner ne free/simple tarika chuna — 4 players ke liye mesh chalta hai. Trade-off: kuch
 strict-NAT/corporate network wale users (~5-10%) connect nahi kar payenge; TURN baad me
-add ho sakta hai agar zaroorat pade. **Abhi tak shuru nahi hua** (bade scope ka feature hai,
-bots ke baad ka number hai).
+add ho sakta hai agar zaroorat pade. **Implemented in RMC-0020.**
 
 ## Design notes (jaise-jaise implement hoga, yahan update hoga)
 
@@ -52,3 +51,29 @@ bots ke baad ka number hai).
 - Verified: `apps/api/test/rooms.service.test.ts` (10 naye tests) + real-server smoke test
   (solo vs 3 bots poora 4-round game, mixed room add/remove bot, dono me bot Mantri ka
   auto-guess) — sab pass.
+
+### Voice chat (RMC-0020) — implemented
+- Audio khud kabhi server se nahi guzarta — sirf signaling (WebRTC offer/answer/ICE
+  candidates) WebSocket se relay hoti hai (`VOICE_SIGNAL`, `VOICE_MUTE`). `RoomsGateway`
+  bas payload ko `toPlayerId` tak pahuncha deta hai agar dono same room me hon — SDP ke
+  andar kabhi nahi jhaakta.
+- Topology: mesh — room ke har human (non-bot, connected) player ki har doosre human se
+  seedhi peer-to-peer connection. Bots ke paas socket hi nahi hota, isliye unse connection
+  kabhi banti hi nahi.
+- Glare (dono taraf se ek saath offer) se bachne ke liye deterministic rule: chhoti
+  `PlayerId` wala hamesha offer bhejta hai (`shouldInitiate`), badi id wala intezaar karta
+  hai. Reactive path (kisi ka offer aa jaye) hamesha answer hi banata hai, apna offer nahi
+  bhejta — pehle isi jagah ek bug tha (dono offers bhej rahe the), unit test se pakda gaya.
+- Sirf public STUN (Google), koi TURN nahi — free, simple, per owner ka decision. ICE
+  candidates jo remote description set hone se pehle aa jaayen, queue ho kar baad me lagte
+  hain.
+- `MAX_PAYLOAD_BYTES` 4096 → 16384 badhaya gaya (SDP offers/answers 4KB se bade ho sakte
+  hain). Isse `smoke-ws.mjs` ka purana abuse-protection check (10KB "bahut bada message")
+  todh gaya tha — 10KB ab naye 16KB limit se chhota tha, connection band hi nahi hota tha,
+  script hamesha wahi hang ho jaati thi. Fix: test ka payload 20KB kar diya (naye limit se
+  bada), taaki check dobara meaningful ho.
+- Verified: `apps/web/test/voice.test.ts` (9 tests, fake `RTCPeerConnection`) +
+  `apps/web/test/voice-ui.test.tsx` (9 tests) + real-server smoke test (same-room relay,
+  cross-room block, mute broadcast) + do asli headless-Chrome browsers (fake mic device)
+  ne real ICE/DTLS negotiate karke ek-doosre ka audio stream connect kiya, real UI ke
+  through, zero console errors.
