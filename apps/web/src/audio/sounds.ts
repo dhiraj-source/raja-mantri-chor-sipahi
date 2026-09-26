@@ -71,6 +71,16 @@ export const VOICE_LINES: Partial<Record<SoundName, string>> = {
   WIN: 'Victory!',
 };
 
+/**
+ * Real recorded animal sounds (CC0/public-domain, from OpenGameArt.org — commercial use OK,
+ * no attribution needed) — TTS ko bhaunk/mya u nahi karwa sakte, isliye asli files.
+ * Cat "catches" the Chor (CORRECT), dog barks as the Chor gets away (WRONG).
+ */
+export const ANIMAL_SOUNDS: Partial<Record<SoundName, string>> = {
+  CORRECT: '/audio/cat-meow.wav',
+  WRONG: '/audio/dog-bark.wav',
+};
+
 // ---- Minimal audio interfaces: asli AudioContext inse match karta hai, tests me fake chalta hai ----
 export interface ParamLike {
   setValueAtTime(value: number, time: number): unknown;
@@ -185,6 +195,43 @@ export class VoiceLinePlayer {
       utterance.pitch = 0.8; // thoda bhaari
       utterance.volume = 0.9;
       synth.speak(utterance);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+// ---- Animal sounds: real audio files, asli HTMLAudioElement inse match karta hai, tests me fake ----
+export interface AudioElementLike {
+  volume: number;
+  play(): Promise<void> | void;
+}
+
+/** Awaaz file bajata hai (real recorded clip). Muted ho ya audio na chale to chup-chaap. */
+export class AnimalSoundPlayer {
+  private readonly cache = new Map<string, AudioElementLike>();
+
+  constructor(
+    private readonly createAudio: (src: string) => AudioElementLike | null,
+    private readonly isMuted: () => boolean,
+  ) {}
+
+  /** Bajaya gaya to true. */
+  play(name: SoundName): boolean {
+    if (this.isMuted()) return false;
+    const src = ANIMAL_SOUNDS[name];
+    if (!src) return false;
+    try {
+      let audio = this.cache.get(src);
+      if (!audio) {
+        const created = this.createAudio(src);
+        if (!created) return false;
+        audio = created;
+        audio.volume = 0.5;
+        this.cache.set(src, audio);
+      }
+      void Promise.resolve(audio.play()).catch(() => undefined);
       return true;
     } catch {
       return false;

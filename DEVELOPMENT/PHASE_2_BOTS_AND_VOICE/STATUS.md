@@ -16,20 +16,21 @@ ek-doosre se awaaz se jud sakein.
 | 1 | Quick play with bots (single player, bots fill the room) | ☑ DONE | RMC-0019 |
 | 2 | Room create: host bots se khaali seats bhar sake | ☑ DONE | RMC-0019 |
 | 3 | Lobby/queue me connected/waiting players ke **naam** dikhein (sirf count nahi) | ☑ DONE | RMC-0019 |
-| 4 | Sound packs: animal sounds + voice-line style reactions | ◐ PARTIAL — voice-lines DONE, animal sounds ⏸ WAITING ON OWNER | RMC-0022 |
+| 4 | Sound packs: animal sounds + voice-line style reactions | ☑ DONE | RMC-0022, RMC-0023 |
 | 5 | Live voice chat (WebRTC mesh, STUN only), per-player mute/unmute | ☑ DONE | RMC-0020 |
 | — | *(aage jo bhi naye features aayenge, yahan neeche add honge)* | | |
 
 ## Decisions (confirmed by owner)
 
-### #4 — Sound/voice packs: **owner khud audio files dega**
+### #4 — Sound/voice packs: **owner khud audio files dega** → **ab DONE (RMC-0023)**
 Asli PUBG voice-lines copyrighted hain, unhe copy/use nahi kar sakte. Owner ne khud PUBG/BGMI
 MP3 download karke try kiya, wahi nateeja nikla — copyright issue. **Updated decision
 (RMC-0022): voice-lines ke liye text-to-speech (koi file nahi, koi copyright risk nahi) —
 ban gaya, DONE.** Animal sounds ke liye TTS kaam nahi aata (bhaunk/mya u nahi kar sakta) —
-uske liye Pixabay ka sound-effects library verify kiya (free, commercial-use OK, attribution
-nahi chahiye, signup nahi chahiye) — link diya gaya hai, owner specific clips choose karke
-bhejega, tab wire hoga. **Blocked on: owner ke clips abhi tak nahi mile.**
+Pixabay verify kiya tha (free, safe), lekin owner ne kaha khud complete karo. Pixabay is
+session se Cloudflare bot-block kar raha tha (koi browser tool bhi available nahi tha) —
+isliye **OpenGameArt.org** use kiya (reachable, CC0 license har file par verify kiya).
+Do real clips wire ho gaye: cat meow (CORRECT), dog bark (WRONG). **DONE (RMC-0023).**
 
 ### #5 — Live voice chat: **WebRTC mesh, sirf public STUN (free), koi TURN nahi**
 Owner ne free/simple tarika chuna — 4 players ke liye mesh chalta hai. Trade-off: kuch
@@ -103,3 +104,18 @@ bina reload ke connect ho gaye.
 - Animal sounds abhi bhi baaki hain — Pixabay (pixabay.com/sound-effects) verify kiya hua
   free/safe source hai (commercial use OK, attribution/signup nahi chahiye); owner clips
   choose karke bheje to turant wire ho jayega.
+
+### Sound packs, part 2/2: animal sounds (RMC-0023) — implemented, DONE
+- Pixabay se direct download nahi ho paya (Cloudflare bot-block, is session me koi browser
+  tool nahi tha). OpenGameArt.org se do real CC0 WAV files liye — har file ka license tag
+  uski apni page par check kiya (assume nahi kiya): "Dog barking mono" (CC0) aur "Kitten Mew"
+  (CC0). Download ke baad RIFF/WAVE header dekh kar confirm bhi kiya ki asli valid audio hai.
+- `apps/web/public/audio/dog-bark.wav` + `cat-meow.wav`, `ANIMAL_SOUNDS` map + `AnimalSoundPlayer`
+  (`apps/web/src/audio/sounds.ts`) — `SoundPlayer`/`VoiceLinePlayer` jaisa hi dependency-injected
+  aur same mute toggle se control hota hai. Mapping: CORRECT → cat meow (catch), WRONG → dog
+  bark (chor bhaag gaya) — yeh apni taraf se creative choice hai, owner ne specify nahi kiya
+  tha, badalna easy hai.
+- Verified: 6 naye unit tests + dev server chala kar `/audio/*.wav` URLs curl se check kiye
+  (200 OK, sahi Content-Type, sahi byte size). Poora `ui:check` (real headless Chrome) nahi
+  chalaya — usme Docker+Postgres+API bhi chahiye; yeh choti, isolated, try/catch-protected
+  addition thi jo pehle se verified pattern (RMC-0014/0022) follow karti hai.

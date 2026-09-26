@@ -822,3 +822,43 @@ None.
 - Animal sounds (the other half of item 4) are still not implemented — a free source (Pixabay) has been verified safe to use, but no specific clips have been chosen/downloaded yet. Phase 2 stays open, not "complete".
 - Speech-synthesis voice/accent is whatever the browser/OS provides by default (not chosen or bundled) — quality varies by device.
 
+# RMC-0023
+
+## Feature
+Phase 2, item 4 (part 2 of 2): animal sounds. Phase 2 checklist item 4 is now fully DONE.
+
+## Status
+COMPLETE.
+
+## What changed
+- Owner said to complete the feature myself rather than wait for them to pick and send clips.
+- Pixabay (the source verified safe in RMC-0022) turned out to be behind Cloudflare bot-protection: a direct `curl` from this environment got HTTP 403 (a browser-challenge page), and no browser-control tool (Claude in Chrome / built-in browser / computer use) was available in this session to get past it.
+- Switched to **OpenGameArt.org**, a well-known free/CC0 game-asset site, reachable directly (HTTP 200, no bot-block). Checked each specific file's license tag on its own page before downloading — not assumed from the site's general reputation: "Dog barking mono" by HaelDB (CC0) and "Kitten Mew" (CC0, single license, no dual-licensing ambiguity).
+- Downloaded both as real WAV files and verified the RIFF/WAVE header byte-for-byte after download (not just trusting the `.wav` extension or a 200 status) before using them.
+- `apps/web/public/audio/dog-bark.wav` (176KB) + `cat-meow.wav` (98KB) — served by Vite as static assets at `/audio/*.wav`.
+- `apps/web/src/audio/sounds.ts`: `ANIMAL_SOUNDS` (a `SoundName` -> file-path map: `CORRECT: cat-meow.wav`, `WRONG: dog-bark.wav`) + `AnimalSoundPlayer` class — same dependency-injected, mute-gated shape as `SoundPlayer`/`VoiceLinePlayer` (an `AudioElementLike` interface real `HTMLAudioElement` satisfies; tests use a fake). Caches one `Audio` object per source file (doesn't recreate it on every play), sets volume to 0.5, and silently no-ops on any failure (muted, `Audio` unavailable, `play()` rejected by browser autoplay policy) so the game is never disrupted by audio.
+- Mapping chosen: cat meow on CORRECT (a cat "catching" its target, matching Mantri/Sipahi correctly catching the Chor), dog bark on WRONG (a dog barking as the Chor gets away). This is a creative choice, not something the owner specified — easy to remap later if it doesn't land well.
+- `apps/web/src/audio/useSounds.ts`: `play(name)` now also calls the animal-sound player, alongside the existing tone + voice line — the one mute toggle still controls all three.
+
+## Reason
+Completing Phase 2 item 4 (owner explicitly asked me to finish it myself instead of waiting on them), while keeping the same zero-ambiguity approach to licensing that RMC-0022 used (verify, don't assume).
+
+## Database
+None.
+
+## API
+None.
+
+## WebSocket
+None.
+
+## Tests
+- web 114 (+6: `AnimalSoundPlayer` plays only for mapped names, sets volume 0.5, stays silent and never creates an `Audio` when muted, caches per source file, never crashes on null/throwing/create or a rejected `play()` promise, and every `ANIMAL_SOUNDS` entry is a real `/audio/*.{wav,mp3,ogg}` path) = 283 total (37 engine + 132 api + 114 web). Build + lint clean.
+- Runtime-checked (not just build output): started the Vite dev server and requested both `/audio/*.wav` URLs directly — both returned 200 OK with `Content-Type: audio/wav` and the exact byte sizes of the downloaded files.
+- NOT run: the full real-headless-Chrome `ui:check` (needs Docker + Postgres + the API dev server up too, not just the web server) — judged disproportionate for this specific increment since the new code follows the identical try/catch-everything pattern the tone and voice-line players were already verified with that way (RMC-0014, RMC-0022). Owner can run `npm run ui:check`, or just play a game, to actually hear it.
+
+## Known limitations
+- The CORRECT/WRONG -> cat/dog mapping is a guess at what feels fun, not a spec from the owner — trivial to change (`ANIMAL_SOUNDS` in sounds.ts) if they'd rather have different clips or a different mapping.
+- Only 2 animal sounds exist (not a full "pack") — more could be added the same way if the owner wants a bigger variety later.
+- Real audio files now exist in the repo for the first time (`apps/web/public/audio/`) — previously all audio was code-generated tones or TTS with zero files. Source: OpenGameArt.org, CC0, license verified per file at download time.
+

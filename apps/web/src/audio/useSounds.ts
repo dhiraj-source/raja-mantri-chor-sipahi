@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AnimalSoundPlayer,
   SoundPlayer,
   VoiceLinePlayer,
   loadMuted,
   saveMuted,
   type AudioContextLike,
+  type AudioElementLike,
   type SoundName,
   type SpeechSynthesisLike,
   type SpeechUtteranceLike,
@@ -36,6 +38,10 @@ function createBrowserUtterance(text: string): SpeechUtteranceLike {
   return new SpeechSynthesisUtterance(text);
 }
 
+function createBrowserAudio(src: string): AudioElementLike | null {
+  return typeof Audio === 'undefined' ? null : new Audio(src);
+}
+
 /** Sounds + mute button ki state. Mute choice localStorage me yaad rehti hai. */
 export function useSounds() {
   const [muted, setMuted] = useState(() => loadMuted(browserStorage()));
@@ -45,6 +51,10 @@ export function useSounds() {
   const player = useMemo(() => new SoundPlayer(createBrowserContext, () => mutedRef.current), []);
   const voice = useMemo(
     () => new VoiceLinePlayer(browserSynth, createBrowserUtterance, () => mutedRef.current),
+    [],
+  );
+  const animal = useMemo(
+    () => new AnimalSoundPlayer(createBrowserAudio, () => mutedRef.current),
     [],
   );
 
@@ -59,8 +69,9 @@ export function useSounds() {
     (name: SoundName) => {
       player.play(name);
       voice.speak(name);
+      animal.play(name);
     },
-    [player, voice],
+    [player, voice, animal],
   );
 
   const toggleMuted = useCallback(() => {

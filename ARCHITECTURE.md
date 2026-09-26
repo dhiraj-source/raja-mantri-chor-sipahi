@@ -120,6 +120,7 @@ apps/api/src/rooms:
 
 - Audio is 100% client side: web/src/audio/sounds.ts holds the tunes as tone data and a SoundPlayer on the Web Audio API (no audio files). Reactions are already broadcast by the server; each browser plays the tune locally. Mute is stored in localStorage.
 - Voice lines (RMC-0022): `VoiceLinePlayer` (same file) uses `window.speechSynthesis` to speak a short phrase on round-result/win moments only (not every reaction, to avoid nagging). Same dependency-injection shape as `SoundPlayer` (a `getSynth()`/`createUtterance()` pair the browser build supplies and tests fake), and the same mute toggle gates both — no new setting. Zero audio files: no copyright exposure, unlike sourcing real PUBG/BGMI voice lines would have been.
+- Animal sounds (RMC-0023): `AnimalSoundPlayer` (same file) plays two real recorded clips (`apps/web/public/audio/*.wav` — CC0/public-domain, from OpenGameArt.org) via `HTMLAudioElement`, same dependency-injection/mute pattern as the other two players. Cat meow on CORRECT (Chor caught), dog bark on WRONG (Chor escapes). TTS can't make animal sounds, hence real files here (unlike the voice lines) — license was verified per file before use, not assumed.
 - scripts/smoke-ws.mjs = protocol level end-to-end test against a running API; scripts/ui-check.mjs = real-browser test (headless Chrome over the DevTools protocol) against the running API + web dev server. Both create test accounts in the dev database.
 
 ## Bots (RMC-0019, Phase 2)
