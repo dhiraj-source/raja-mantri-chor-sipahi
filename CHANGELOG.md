@@ -754,3 +754,36 @@ New: `VOICE_SIGNAL` (client<->server<->client, opaque relay) and `VOICE_MUTE` (c
 - Voice never reconnects automatically if a peer connection drops mid-call (e.g. network blip) short of a full room re-sync (rejoining triggers `syncPeers` again); there's no dedicated ICE-restart path yet.
 - Sound packs (item 4) are still not implemented — waiting on the owner's own audio files. Phase 2 is not "complete"; more features can still be added to it.
 
+# RMC-0021
+
+## Feature
+Phase 2 bugfix: voice chat needed a page reload to connect (staggered joins)
+
+## Status
+COMPLETE
+
+## What changed
+- Owner reported: after enabling the mic, voice chat sometimes needed a page reload to actually connect to the other player.
+- Root cause (found by re-reading the code, not guessed): when two players join voice chat at different times, whichever one joins *first* may already be the designated offer-sender (`shouldInitiate`, lexicographically smaller `PlayerId`) — it sends its offer immediately, but the other player hasn't clicked "Join voice chat" yet, so nothing on their end is listening and the offer is silently dropped forever. The first player never retries. A reload forced a fresh, correctly-timed attempt.
+- Fix (web/src/voice/webrtc.ts): added a `ready` signal, sent whenever a player creates a *passive* (non-initiating) connection via `syncPeers` — announcing "I'm listening now." When the other side (the designated initiator) receives `ready` for a connection it already tried and is not yet connected, it resends its cached offer (`peer.pc.localDescription`) instead of a fresh one; if it hasn't tried at all yet, it connects fresh. No new WebSocket message type or gateway change needed — `ready` is just a new case inside the existing opaque `VoiceSignal` payload.
+
+## Reason
+Real bug reported by the owner during actual use (two people joining voice chat a few seconds apart), not caught by the earlier verification because that testing always joined voice chat on both sides close together in time.
+
+## Database
+None.
+
+## API
+None.
+
+## WebSocket
+None (the fix is entirely inside the existing opaque `VOICE_SIGNAL` payload — the gateway relay is unchanged).
+
+## Tests
+- web 105 (+3: the staggered-join recovery scenario end to end at the unit level, a guard test that an already-`connected` peer doesn't get a redundant resend, and a guard test for receiving `ready` before ever attempting a connection) = 271 -> 274 total (37 engine + 132 api + 105 web). One pre-existing test's assertion was stale (it asserted the passive side sends *nothing*, which is no longer true — it now sends `ready`) and was updated, not weakened.
+- Verified for real: after the unit tests, ran a fresh two-headless-Chrome check (`--use-fake-device-for-media-stream --use-fake-ui-for-media-stream`) that specifically reproduces the reported bug shape — player A joins voice chat, waits 4 real seconds, *then* player B joins — and confirmed both sides reach a connected peer state with zero browser console errors and no reload. This is the scenario the earlier RMC-0020 verification didn't cover (it joined both sides close together in time), which is why the bug shipped in the first place.
+
+## Known limitations
+- This does not add a general retry/heartbeat for connections that fail for other reasons (e.g. a mid-call network blip) — see RMC-0020's known limitations, still true.
+- Sound packs (item 4) still not implemented — waiting on the owner's own audio files. Phase 2 stays open, not "complete".
+

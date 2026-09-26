@@ -7,6 +7,7 @@ function fakePeerConnection() {
   const senders: { track: unknown }[] = [];
   const pc = {
     connectionState: 'new',
+    localDescription: null as RTCSessionDescriptionInit | null,
     onicecandidate: null as unknown,
     ontrack: null as unknown,
     onconnectionstatechange: null as unknown,
@@ -23,8 +24,9 @@ function fakePeerConnection() {
       calls.push('createAnswer');
       return { type: 'answer', sdp: 'fake-answer' } as RTCSessionDescriptionInit;
     }),
-    setLocalDescription: vi.fn(async () => {
+    setLocalDescription: vi.fn(async (desc: RTCSessionDescriptionInit) => {
       calls.push('setLocalDescription');
+      pc.localDescription = desc;
     }),
     setRemoteDescription: vi.fn(async () => {
       calls.push('setRemoteDescription');
@@ -89,7 +91,7 @@ describe('VoiceRoom', () => {
     expect(sent[0]).toMatchObject({ to: 'b', signal: { kind: 'offer' } });
   });
 
-  it('badi id (main) chhoti id (other) ko offer nahi bhejta, intezaar karta hai', async () => {
+  it('badi id (main) chhoti id (other) ko offer nahi bhejta, sirf "ready" bhejta hai', async () => {
     const sent: { to: string; signal: VoiceSignal }[] = [];
     const room = new VoiceRoom('z', {
       factory: { create: () => fakePeerConnection().pc },
@@ -98,9 +100,76 @@ describe('VoiceRoom', () => {
       onRemoteStreamRemoved: () => undefined,
       onStateChange: () => undefined,
     });
-    room.syncPeers(['a']); // z > a => z intezaar karta hai
+    room.syncPeers(['a']); // z > a => z intezaar karta hai, bas 'ready' bhejta hai
     await new Promise((r) => setTimeout(r, 0));
-    expect(sent).toHaveLength(0);
+    expect(sent).toEqual([{ to: 'a', signal: { kind: 'ready' } }]);
+  });
+
+  it('baad me voice join karne wale ko khoya hua offer dobara milta hai (reload wala bug)', async () => {
+    // 'a' (chhoti id, initiator) pehle voice join karta hai — 'b' abhi tak join hi nahi hua,
+    // isliye uska offer kahin nahi pahuncha (real duniya me: b ka roomRef abhi null hai).
+    const { room: a, sent: sentByA } = setup(); // myId = 'a'
+    a.setLocalStream(fakeStream());
+    a.syncPeers(['b']);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sentByA).toHaveLength(1);
+    expect(sentByA[0]).toMatchObject({ to: 'b', signal: { kind: 'offer' } });
+
+    // Ab 'b' voice join karta hai. 'b' initiator nahi hai (a < b), isliye 'ready' bhejta hai.
+    const sentByB: { to: string; signal: VoiceSignal }[] = [];
+    const b = new VoiceRoom('b', {
+      factory: { create: () => fakePeerConnection().pc },
+      send: (to, signal) => sentByB.push({ to, signal }),
+      onRemoteStream: () => undefined,
+      onRemoteStreamRemoved: () => undefined,
+      onStateChange: () => undefined,
+    });
+    b.syncPeers(['a']);
+    expect(sentByB).toEqual([{ to: 'a', signal: { kind: 'ready' } }]);
+
+    // 'ready' 'a' tak pahuncha — 'a' apna pehle wala (ab tak na-pahuncha) offer dobara bhejta hai.
+    await a.handleSignal('b', { kind: 'ready' });
+    expect(sentByA).toHaveLength(2);
+    expect(sentByA[1]).toMatchObject({ to: 'b', signal: { kind: 'offer' } });
+
+    // Wo dobara-bheja offer ab 'b' tak pahunchta hai — 'b' answer bana kar bhejta hai.
+    await b.handleSignal('a', sentByA[1].signal);
+    expect(sentByB).toHaveLength(2);
+    expect(sentByB[1]).toMatchObject({ to: 'a', signal: { kind: 'answer' } });
+  });
+
+  it('pehle se connected peer ke liye "ready" aane par dobara offer nahi bhejta', async () => {
+    const fake = fakePeerConnection();
+    const sent: { to: string; signal: VoiceSignal }[] = [];
+    const room = new VoiceRoom('a', {
+      factory: { create: () => fake.pc },
+      send: (to, signal) => sent.push({ to, signal }),
+      onRemoteStream: () => undefined,
+      onRemoteStreamRemoved: () => undefined,
+      onStateChange: () => undefined,
+    });
+    room.setLocalStream(fakeStream());
+    room.syncPeers(['b']);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toHaveLength(1);
+    fake.raw.connectionState = 'connected'; // maan lo connection ban chuka hai
+    await room.handleSignal('b', { kind: 'ready' });
+    expect(sent).toHaveLength(1); // dobara offer nahi bheja, connection already bana hai
+  });
+
+  it('"ready" aaye aur abhi tak koi peer nahi banaya to (agar hum initiator hain) fresh offer bhejta hai', async () => {
+    const sent: { to: string; signal: VoiceSignal }[] = [];
+    const room = new VoiceRoom('a', { // a < b => a initiator hai
+      factory: { create: () => fakePeerConnection().pc },
+      send: (to, signal) => sent.push({ to, signal }),
+      onRemoteStream: () => undefined,
+      onRemoteStreamRemoved: () => undefined,
+      onStateChange: () => undefined,
+    });
+    await room.handleSignal('b', { kind: 'ready' });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ to: 'b', signal: { kind: 'offer' } });
   });
 
   it('offer aane par answer banata hai aur bhejta hai', async () => {

@@ -32,6 +32,7 @@ See `DEVELOPMENT/` for the phase-tracking convention.
 - RMC-0018 **Actually deployed, live**: Render (API + free Postgres + free Redis) + Vercel (web), GitHub-connected auto-deploy on both. Verified with a real headless-Chrome visit to the production URL (connects, no console errors) and a live smoke test (4-round game, rewards) against the production WebSocket. Railway wasn't used in the end (free trial had expired) — see DEPLOYMENT.md for the live URLs and the one thing owner must act on: free Postgres expires ~2026-10-26.
 - RMC-0019 **Phase 2 kickoff**: Quick play with bots (solo player), host can fill/empty room seats with bots, quick-match queue shows waiting players' names. See DEVELOPMENT/PHASE_2_BOTS_AND_VOICE/STATUS.md.
 - RMC-0020 **Live voice chat**: WebRTC mesh (public STUN only), join/mute/unmute, per-peer connection status; bots never appear in the voice list. Verified with unit tests, the real-server smoke test, and two real headless-Chrome browsers completing genuine ICE/DTLS negotiation. See DEVELOPMENT/PHASE_2_BOTS_AND_VOICE/STATUS.md.
+- RMC-0021 **Voice chat bugfix**: fixed a real "need to reload to connect" bug (owner-reported) caused by joining voice chat at different times — the earlier joiner's offer could be sent before the later joiner was listening and was never retried. Verified with a staggered-join headless-Chrome test that reproduces the exact reported scenario.
 
 ## In Progress
 - Kuch nahi.
@@ -50,7 +51,7 @@ Database: PostgreSQL 16 (Docker) via pg — accounts, game_history; migrations i
 Run locally (3 terminals, folder D:\ANJALI\GAME): `npm run db:up` (once, Docker Desktop must be running), `npm run dev:api`, `npm run dev:web` -> http://localhost:5173 (open two tabs = two players, or one tab + "Play with bots" for solo). Full UI check: `npm run ui:check` (with the API and web dev server running). Phone on the same WiFi: open http://<PC-IP>:5173 (RMC-0016); allow ports 5173 and 3000 in Windows Firewall (Private networks).
 Realtime: WebSocket (path /ws)
 Temporary state: in API memory (Redis 7 in Docker, NOT used yet)
-Tests: Vitest (engine 37, api 132 incl. real-PostgreSQL, cors and bot tests, web 102 incl. voice tests = 271).
+Tests: Vitest (engine 37, api 132 incl. real-PostgreSQL, cors and bot tests, web 105 incl. voice tests = 274).
 Deployment: LIVE at https://raja-mantri-chor-sipahi-five.vercel.app (web, Vercel) + https://rmc-api-etep.onrender.com (API, Render). apps/api/Dockerfile + render.yaml (reference) + vercel.json + .github/workflows/ci.yml — see DEPLOYMENT.md. Local smoke test: run the API with `RECONNECT_GRACE_MS=1500 VOTE_DURATION_MS=1500`, then `npm run smoke -w @rmc/api`.
 Lint: ESLint 9 + typescript-eslint
 
@@ -74,7 +75,7 @@ None known. UI was checked in a real headless Chrome (390px phone + desktop); vo
 - Game freezes while the Mantri is disconnected until grace (60s) + vote (30s) decide; a disconnected human's seat is never auto-replaced by a bot mid-game (bots, RMC-0019, only fill empty seats before a game starts). A cancelled game gives no XP.
 - Bot difficulty is a single fixed random-guess behavior; no difficulty levels.
 - WebSocket limits are per connection only (40 msgs/s, 16KB — raised from 20/4KB for voice signaling); no per-IP limits yet (deploy time).
-- Voice chat is STUN-only (no TURN): players behind a strict/corporate NAT (~5-10% estimated) can't connect their voice peer. No push-to-talk, no speaking indicator, no automatic ICE restart if a peer connection drops mid-call.
+- Voice chat is STUN-only (no TURN): players behind a strict/corporate NAT (~5-10% estimated) can't connect their voice peer. No push-to-talk, no speaking indicator, no automatic ICE restart if a peer connection drops mid-call (RMC-0021 fixed the "need a reload to connect" case specifically; a connection that fails for some other reason, like a network blip, still isn't auto-retried).
 - npm audit warnings (old majors: NestJS 10, Vite 5, Vitest 2). Do NOT run `audit fix --force`.
 - Smoke test creates accounts in the dev database on every run (delete rows named p1_..p4_*, fa_*, fb_*, fc_* when needed).
 - Editing files with non-ASCII text (emoji/Hindi) must be done with the Edit tool, not PowerShell Get-Content/Set-Content (it corrupts the encoding).
@@ -82,4 +83,4 @@ None known. UI was checked in a real headless Chrome (390px phone + desktop); vo
 - (was: no commit yet — fixed, see Pending above for the push/deploy steps still left)
 
 ## Last Change
-RMC-0020 — Live voice chat (WebRTC mesh, STUN only), join/mute/unmute (Phase 2)
+RMC-0021 — Voice chat bugfix: staggered joins no longer need a page reload to connect (Phase 2)

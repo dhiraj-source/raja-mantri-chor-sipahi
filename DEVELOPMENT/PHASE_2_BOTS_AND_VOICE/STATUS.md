@@ -77,3 +77,15 @@ add ho sakta hai agar zaroorat pade. **Implemented in RMC-0020.**
   cross-room block, mute broadcast) + do asli headless-Chrome browsers (fake mic device)
   ne real ICE/DTLS negotiate karke ek-doosre ka audio stream connect kiya, real UI ke
   through, zero console errors.
+
+### Voice chat bugfix (RMC-0021) — "reload chahiye tha" fix
+Owner ne use karke bataya: kabhi-kabhi mic on karne ke baad reload karna padta tha tabhi
+awaaz judti thi. Wajah: agar dono players alag-alag time par voice join karte the, to jo
+pehle offer bhejta tha (id comparison se decide hota hai kaun offer bhejega) uska offer
+tab tak bhej deta tha jab tak doosra sun hi nahi raha hota tha — wo offer hamesha ke liye
+kho jaata tha, dobara kabhi nahi bhejta tha. Fix: ek naya `ready` signal — jab koi passively
+(offer ka wait karte hue) connect karta hai, doosre ko bata deta hai "ab main sun raha hoon",
+aur agar us doosre ne pehle offer bheja tha jo abhi tak connect nahi hua, wo apna offer
+dobara bhej deta hai. Verified: 3 naye unit tests + ek naya real do-headless-Chrome test
+jisme jaan-boojh kar A pehle join karta hai, 4 second ruk kar B join karta hai — dono
+bina reload ke connect ho gaye.

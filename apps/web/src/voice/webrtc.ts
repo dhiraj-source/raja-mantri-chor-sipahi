@@ -12,7 +12,10 @@ export function shouldInitiate(myId: PlayerId, otherId: PlayerId): boolean {
 export type VoiceSignal =
   | { kind: 'offer'; sdp: RTCSessionDescriptionInit }
   | { kind: 'answer'; sdp: RTCSessionDescriptionInit }
-  | { kind: 'ice'; candidate: RTCIceCandidateInit };
+  | { kind: 'ice'; candidate: RTCIceCandidateInit }
+  /** "Main ab sun raha hoon" — jab hum baad me voice join karein, taaki jo offer humare
+   *  sunne se pehle bheja gaya tha (isliye kho gaya) wo dobara bheja jaaye. */
+  | { kind: 'ready' };
 
 export type PeerConnectionState = 'connecting' | 'connected' | 'failed' | 'closed';
 
@@ -84,16 +87,37 @@ export class VoiceRoom {
   syncPeers(otherPlayerIds: readonly PlayerId[]): void {
     const wanted = new Set(otherPlayerIds.filter((id) => id !== this.myId));
     for (const id of wanted) {
-      if (!this.peers.has(id)) this.connectTo(id);
+      if (!this.peers.has(id)) {
+        const initiate = shouldInitiate(this.myId, id);
+        this.connectTo(id, initiate);
+        // Hum initiate nahi kar rahe (doosra offer bhejega) — usse batao ki ab hum sun rahe
+        // hain, kyunki uska offer humare join karne SE PEHLE bheja gaya ho sakta hai (kho gaya).
+        if (!initiate) this.deps.send(id, { kind: 'ready' });
+      }
     }
     for (const id of [...this.peers.keys()]) {
       if (!wanted.has(id)) this.disconnect(id);
     }
   }
 
-  /** Doosre player se aaya signal (offer/answer/ice) handle karo. */
+  /** Doosre player se aaya signal (offer/answer/ice/ready) handle karo. */
   async handleSignal(fromPlayerId: PlayerId, signal: VoiceSignal): Promise<void> {
     try {
+      if (signal.kind === 'ready') {
+        const existing = this.peers.get(fromPlayerId);
+        if (!existing) {
+          // Humne abhi tak inse connect karne ki koshish hi nahi ki (shayad hum khud abhi
+          // voice join kar rahe hain) — agar hum initiator hain to fresh offer bhejo.
+          if (shouldInitiate(this.myId, fromPlayerId)) this.connectTo(fromPlayerId, true);
+          return;
+        }
+        // Humne pehle offer bheja tha jo unke sunne se pehle bheja gaya isliye kho gaya —
+        // ab wahi (cached) offer dobara bhej do. Agar pehle se connected hain to kuch mat karo.
+        if (existing.pc.connectionState !== 'connected' && existing.pc.localDescription) {
+          this.deps.send(fromPlayerId, { kind: 'offer', sdp: existing.pc.localDescription });
+        }
+        return;
+      }
       // initiate=false: hume unka offer/ice mil raha hai, isliye hum khud offer nahi bhejenge
       // (warna dono taraf offer bhejne lagte — "glare").
       const peer = this.peers.get(fromPlayerId) ?? this.connectTo(fromPlayerId, false);

@@ -169,6 +169,14 @@ apps/api/src/rooms:
   per-frame cap (`ws`'s own `maxPayload`, closes the connection with code 1009 over the
   limit) — there's deliberately no separate, smaller limit for non-signaling messages,
   since 16KB is still a small, reasonable abuse-protection ceiling either way.
+- Lost-offer recovery (RMC-0021): if two players join voice chat at different times, the
+  earlier joiner may already be the designated offerer (per `shouldInitiate`) and send an
+  offer before the later joiner is listening — that offer is silently dropped, and without
+  a fix the pair never connects (a page reload was the only way to retry). Fix: a `ready`
+  signal (just another case of the same opaque `VoiceSignal`, no gateway change) is sent
+  whenever a player creates a passive connection; the designated initiator, on receiving
+  `ready` for a peer it already tried, resends its cached `localDescription` instead of
+  waiting forever.
 
 ## Characters and shop (RMC-0013)
 
