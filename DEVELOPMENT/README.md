@@ -33,4 +33,5 @@ Root ke 5 files (`CLAUDE.md`, `PROJECT_STATUS.md`, `LAST_WORK.md`, `CHANGELOG.md
 ## Ab tak
 
 - **PHASE 1** (RMC-0001 — RMC-0018): Foundation se lekar live deployment tak. **COMPLETE.**
-- **PHASE 2** (RMC-0019 se aage): Bots, room me mixed human+bot, voice packs, live voice chat. **IN PROGRESS.**
+- **PHASE 2** (RMC-0019 — RMC-0023): Bots, room me mixed human+bot, voice packs, live voice chat. **IN PROGRESS** (checklist done, phase khuli hai owner ke standing instruction ke hisaab se).
+- **PHASE 3** (naya game mode — Draw & Guess): Skribbl.io-style drawing+guessing mode, RMCS ke saath. **IN PROGRESS.**

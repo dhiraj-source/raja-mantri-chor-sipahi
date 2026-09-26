@@ -12,11 +12,15 @@ import type { WebSocket } from 'ws';
 import { summarizeGameForPlayer } from '@rmc/game-engine';
 import {
   RECONNECT_TOKEN_PARAM,
+  type DrawGuessServerMessage,
+  type DrawGuessSettings,
+  type DrawGuessStroke,
   type PlayerId,
   type ServerMessage,
   type VoteChoice,
 } from '@rmc/shared-types';
 import { AccountsService } from '../accounts/accounts.service';
+import { DrawGuessService, RoomError as DgRoomError } from '../draw-guess/draw-guess.service';
 import { FriendsService } from '../friends/friends.service';
 import { MatchmakingService } from './matchmaking.service';
 import { RateLimiter } from './rate-limiter';
@@ -52,6 +56,14 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
   private readonly limiter = new RateLimiter(MAX_MESSAGES_PER_SECOND, 1000);
   /** Ek player 2 second me ek hi invite bhej sakta hai. */
   private readonly inviteLimiter = new RateLimiter(1, 2000);
+  /** Draw & Guess: chat/guess spam se bachav (drawing strokes global limiter se hi cover hote hain). */
+  private readonly dgChatLimiter = new RateLimiter(5, 3000);
+  /** Draw & Guess: ek hi timer per room (jo bhi phase abhi chal raha hai uska deadline). */
+  private readonly dgTimers = new Map<string, NodeJS.Timeout>();
+  /** Draw & Guess: is room ke chat log me se abhi tak kitni entries broadcast ho chuki hain. */
+  private readonly dgChatSent = new Map<string, number>();
+  /** Draw & Guess: disconnected player ke wapas aane ka intezaar (RMCS jaisa hi grace time). */
+  private readonly dgGraceTimers = new Map<PlayerId, NodeJS.Timeout>();
   private nextSocketId = 0;
   private readonly socketIds = new WeakMap<WebSocket, string>();
 
@@ -61,6 +73,7 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     private readonly matchmaking: MatchmakingService,
     private readonly accounts: AccountsService,
     private readonly friends: FriendsService,
+    private readonly drawGuess: DrawGuessService,
   ) {
     this.rooms.onGameFinished = (game) => void this.rewardPlayers(game);
     this.rooms.onRoundStarted = (code) => this.maybeScheduleBotGuess(code);
@@ -73,6 +86,15 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     };
     this.friends.isOnline = (accountId) => this.isAccountOnline(accountId);
     this.friends.onChange = (accountIds) => accountIds.forEach((id) => this.notifyAccount(id));
+
+    // Draw & Guess: ek hi generic scheduler — jo bhi phase abhi hai, uska turnEndsAt padh kar
+    // agla timer set karta hai; fire hone par phase dobara check karke sahi transition chalata hai.
+    const rescheduleDg = (code: string) => this.scheduleDgTimer(code);
+    this.drawGuess.onGameStarted = rescheduleDg;
+    this.drawGuess.onChoosingWord = rescheduleDg;
+    this.drawGuess.onTurnStarted = rescheduleDg;
+    this.drawGuess.onTurnEnded = rescheduleDg;
+    this.drawGuess.onGameFinished = (code) => this.clearDgTimer(code);
   }
 
   // ---- Presence (kaun online hai) aur friends ki live khabar ----
@@ -203,12 +225,17 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       ...this.graceTimers.values(),
       ...this.voteTimers.values(),
       ...this.botGuessTimers.values(),
+      ...this.dgTimers.values(),
     ]) {
       clearTimeout(timer);
     }
     this.graceTimers.clear();
     this.voteTimers.clear();
     this.botGuessTimers.clear();
+    this.dgTimers.clear();
+    this.dgChatSent.clear();
+    for (const timer of this.dgGraceTimers.values()) clearTimeout(timer);
+    this.dgGraceTimers.clear();
   }
 
   handleConnection(socket: WebSocket, request?: IncomingMessage): void {
@@ -216,7 +243,7 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     const token = this.readToken(request);
     const known = token ? this.sessions.resolve(token) : null;
 
-    if (known && this.rooms.getRoomCodeOf(known)) {
+    if (known && (this.rooms.getRoomCodeOf(known) || this.drawGuess.getRoomCodeOf(known))) {
       this.restore(socket, known, token as string);
       return;
     }
@@ -248,9 +275,19 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     // Queue me wait karne wale ke liye reconnect grace nahi: seedha hatao.
     if (this.matchmaking.leave(playerId)) this.notifyQueue();
 
+    const dgCode = this.drawGuess.getRoomCodeOf(playerId);
+    if (dgCode) {
+      this.drawGuess.handleDrawerDisconnect(dgCode, playerId); // drawer gaya to turn turant khatam, atakna nahi chahiye
+      this.drawGuess.setConnected(playerId, false); // host ho to yahi andar turant naya host bhi bana deta hai
+      this.broadcastDgRoom(dgCode);
+      // RMCS jaisa vote nahi hai (casual game, turn-rotation khud hi kaafi hai) — bas itna:
+      // grace time ke andar wapas na aaye to seat khali kar do, room hamesha khelne-layak rahe.
+      this.armDgGrace(playerId);
+    }
+
     const code = this.rooms.getRoomCodeOf(playerId);
     if (!code) {
-      this.dropSession(playerId);
+      if (!dgCode) this.dropSession(playerId);
       return;
     }
     this.rooms.setConnected(playerId, false);
@@ -402,6 +439,203 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     this.handle(socket, (id) => this.rooms.removeBot(id, body?.botId as string));
   }
 
+  // ---------------------------------------------------------------------------
+  // Draw & Guess — poori tarah alag game mode, apna room map (DrawGuessService), same socket.
+  // ---------------------------------------------------------------------------
+
+  @SubscribeMessage('DG_CREATE_ROOM')
+  dgCreateRoom(
+    @ConnectedSocket() socket: WebSocket,
+    @MessageBody() body: { name?: string; settings?: Partial<DrawGuessSettings> },
+  ): void {
+    this.dgHandle(socket, (id) => this.drawGuess.createRoom(id, body?.name as string, body?.settings));
+  }
+
+  @SubscribeMessage('DG_JOIN_ROOM')
+  dgJoinRoom(
+    @ConnectedSocket() socket: WebSocket,
+    @MessageBody() body: { code?: string; name?: string },
+  ): void {
+    this.dgHandle(socket, (id) => this.drawGuess.joinRoom(id, body?.code as string, body?.name as string));
+  }
+
+  @SubscribeMessage('DG_LEAVE_ROOM')
+  dgLeaveRoom(@ConnectedSocket() socket: WebSocket): void {
+    const playerId = this.playerOfSocket.get(socket);
+    if (!playerId) return;
+    const oldCode = this.drawGuess.getRoomCodeOf(playerId);
+    const code = this.drawGuess.leaveRoom(playerId);
+    this.send(playerId, { event: 'DG_ROOM_STATE', data: null });
+    this.send(playerId, { event: 'DG_GAME_VIEW', data: null });
+    if (code) this.broadcastDgRoom(code);
+    else if (oldCode) this.dgChatSent.delete(oldCode); // room khatam ho gaya, ab tracking ki zaroorat nahi
+  }
+
+  @SubscribeMessage('DG_READY')
+  dgReady(@ConnectedSocket() socket: WebSocket, @MessageBody() body: { ready?: boolean }): void {
+    this.dgHandle(socket, (id) => this.drawGuess.setReady(id, Boolean(body?.ready)));
+  }
+
+  @SubscribeMessage('DG_UPDATE_SETTINGS')
+  dgUpdateSettings(
+    @ConnectedSocket() socket: WebSocket,
+    @MessageBody() body: { settings?: Partial<DrawGuessSettings> },
+  ): void {
+    this.dgHandle(socket, (id) => this.drawGuess.updateSettings(id, body?.settings ?? {}));
+  }
+
+  @SubscribeMessage('DG_KICK_PLAYER')
+  dgKickPlayer(@ConnectedSocket() socket: WebSocket, @MessageBody() body: { playerId?: string }): void {
+    this.dgGuard(socket, (id) => {
+      const { code, kickedId } = this.drawGuess.kickPlayer(id, body?.playerId as string);
+      this.send(kickedId, { event: 'DG_ROOM_STATE', data: null });
+      this.send(kickedId, { event: 'DG_GAME_VIEW', data: null });
+      this.broadcastDgRoom(code);
+    });
+  }
+
+  @SubscribeMessage('DG_START_GAME')
+  dgStartGame(@ConnectedSocket() socket: WebSocket): void {
+    this.dgHandle(socket, (id) => this.drawGuess.startGame(id));
+  }
+
+  @SubscribeMessage('DG_SELECT_WORD')
+  dgSelectWord(@ConnectedSocket() socket: WebSocket, @MessageBody() body: { word?: string }): void {
+    this.dgHandle(socket, (id) => this.drawGuess.selectWord(id, body?.word as string));
+  }
+
+  /** Ek hi text box guess + chat dono karta hai — service decide karta hai kaunsa hua. */
+  @SubscribeMessage('DG_CHAT')
+  dgChat(@ConnectedSocket() socket: WebSocket, @MessageBody() body: { text?: string }): void {
+    this.dgGuard(socket, (id) => {
+      if (!this.dgChatLimiter.allow(id)) throw new DgRoomError('RATE_LIMITED', 'Thoda ruko.');
+      const code = this.drawGuess.getRoomCodeOf(id);
+      this.drawGuess.chat(id, body?.text as string);
+      // broadcastDgRoom naye chat entries (chahe ek call se ek ho ya do — jaise sab guess kar
+      // chuke to turn turant khatam hokar CORRECT_GUESS + "word was..." dono ban jaate hain)
+      // khud dhoond kar bhej deta hai, yahan alag se track karne ki zaroorat nahi.
+      if (code) this.broadcastDgRoom(code);
+    });
+  }
+
+  /** Sirf drawer draw kar sakta hai — server yahi check karta hai, client ke kehne par bharosa nahi. */
+  @SubscribeMessage('DG_STROKE')
+  dgStroke(@ConnectedSocket() socket: WebSocket, @MessageBody() body: DrawGuessStroke): void {
+    const playerId = this.playerOfSocket.get(socket);
+    if (!playerId || !this.drawGuess.isDrawer(playerId)) return;
+    const code = this.drawGuess.getRoomCodeOf(playerId);
+    if (!code) return;
+    for (const id of this.drawGuess.getPlayerIds(code)) {
+      if (id !== playerId) this.send(id, { event: 'DG_STROKE', data: { playerId, stroke: body } });
+    }
+  }
+
+  @SubscribeMessage('DG_END_GAME')
+  dgEndGame(@ConnectedSocket() socket: WebSocket): void {
+    this.dgHandle(socket, (id) => this.drawGuess.forceEndGame(id));
+  }
+
+  @SubscribeMessage('DG_RETURN_TO_LOBBY')
+  dgReturnToLobby(@ConnectedSocket() socket: WebSocket): void {
+    this.dgHandle(socket, (id) => this.drawGuess.returnToLobby(id));
+  }
+
+  /** Jo bhi phase abhi chal raha hai uska deadline padh kar agla timer schedule karta hai. */
+  private scheduleDgTimer(code: string): void {
+    const endsAt = this.drawGuess.getTurnEndsAt(code);
+    this.clearDgTimer(code);
+    if (endsAt === null) return;
+    const delay = Math.max(0, endsAt - this.drawGuess.now());
+    this.dgTimers.set(
+      code,
+      setTimeout(() => this.fireDgTimer(code), delay),
+    );
+  }
+
+  private clearDgTimer(code: string): void {
+    const timer = this.dgTimers.get(code);
+    if (timer) clearTimeout(timer);
+    this.dgTimers.delete(code);
+  }
+
+  /** Timer fire hua: abhi ka phase dobara check karke sahi transition chalata hai (state badal chuki ho sakti hai). */
+  private fireDgTimer(code: string): void {
+    this.dgTimers.delete(code);
+    const phase = this.drawGuess.getPhase(code);
+    if (phase === 'COUNTDOWN' || phase === 'ROUND_RESULTS') this.drawGuess.beginNextTurn(code);
+    else if (phase === 'CHOOSING_WORD') this.drawGuess.autoSelectWord(code);
+    else if (phase === 'DRAWING') this.drawGuess.endTurn(code);
+    else return;
+    this.broadcastDgRoom(code);
+  }
+
+  private dgHandle(socket: WebSocket, action: (playerId: PlayerId) => string): void {
+    this.dgGuard(socket, (playerId) => this.broadcastDgRoom(action(playerId)));
+  }
+
+  private dgGuard(socket: WebSocket, action: (playerId: PlayerId) => void): void {
+    const playerId = this.playerOfSocket.get(socket);
+    if (!playerId) return;
+    try {
+      action(playerId);
+    } catch (e) {
+      this.reportDgError(playerId, e);
+    }
+  }
+
+  private reportDgError(playerId: PlayerId, e: unknown): void {
+    if (e instanceof DgRoomError) {
+      this.send(playerId, { event: 'DG_ERROR', data: { code: e.code, message: e.message } });
+    } else {
+      console.error('Unexpected error in draw-guess action', e);
+      this.send(playerId, { event: 'DG_ERROR', data: { code: 'BAD_MESSAGE', message: 'Kuch galat ho gaya.' } });
+    }
+  }
+
+  /** Player ke wapas aane ka intezaar shuru (purana timer ho to badal deta hai). */
+  private armDgGrace(playerId: PlayerId): void {
+    const old = this.dgGraceTimers.get(playerId);
+    if (old) clearTimeout(old);
+    this.dgGraceTimers.set(
+      playerId,
+      setTimeout(() => this.expireDgGrace(playerId), RECONNECT_GRACE_MS),
+    );
+  }
+
+  private clearDgGrace(playerId: PlayerId): void {
+    const timer = this.dgGraceTimers.get(playerId);
+    if (timer) clearTimeout(timer);
+    this.dgGraceTimers.delete(playerId);
+  }
+
+  /** Grace time khatam, player wapas nahi aaya: seat khali karo (room hamesha khelne-layak rahe). */
+  private expireDgGrace(playerId: PlayerId): void {
+    this.dgGraceTimers.delete(playerId);
+    const code = this.drawGuess.leaveRoom(playerId);
+    this.dropSession(playerId);
+    if (code) this.broadcastDgRoom(code);
+  }
+
+  /**
+   * Room ke har player ko DG room state + uska apna safe game view bhejo. Naye chat/system
+   * entries (join/leave/start/turn-transitions waghera kai jagah se `pushSystem` karte hain) bhi
+   * yahin se broadcast hote hain — isliye har DG action ke baad sirf ye ek function call karna
+   * kaafi hai, alag se kahin "chat bhi bhejo" yaad nahi rakhna padta.
+   */
+  private broadcastDgRoom(code: string): void {
+    const roomView = this.drawGuess.getRoomView(code);
+    const chat = this.drawGuess.getChatOf(code);
+    const alreadySent = this.dgChatSent.get(code) ?? 0;
+    const newEntries = chat.slice(alreadySent);
+    this.dgChatSent.set(code, chat.length);
+
+    for (const playerId of this.drawGuess.getPlayerIds(code)) {
+      this.send(playerId, { event: 'DG_ROOM_STATE', data: roomView });
+      this.send(playerId, { event: 'DG_GAME_VIEW', data: this.drawGuess.getGameViewFor(playerId) });
+      for (const entry of newEntries) this.send(playerId, { event: 'DG_CHAT_MESSAGE', data: entry });
+    }
+  }
+
   /** ROUND_ACTIVE ka Mantri bot ho to uska guess thodi der baad khud kar do. */
   private maybeScheduleBotGuess(code: string): void {
     const old = this.botGuessTimers.get(code);
@@ -450,11 +684,21 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     this.bind(socket, playerId); // pehle bind, taaki purane socket ka close ignore ho
     if (old && old !== socket) old.close(4000, 'replaced by a new connection');
 
-    this.rooms.setConnected(playerId, true);
     this.send(playerId, { event: 'CONNECTED', data: { playerId, token } });
     const accountId = this.sessions.accountOf(playerId);
     if (accountId) this.presenceChanged(accountId); // wapas online
-    this.broadcastRoom(this.rooms.getRoomCodeOf(playerId) as string);
+
+    const dgCode = this.drawGuess.getRoomCodeOf(playerId);
+    if (dgCode) {
+      this.clearDgGrace(playerId);
+      this.drawGuess.setConnected(playerId, true);
+      this.broadcastDgRoom(dgCode);
+    }
+    const code = this.rooms.getRoomCodeOf(playerId);
+    if (code) {
+      this.rooms.setConnected(playerId, true);
+      this.broadcastRoom(code);
+    }
   }
 
   /** Player ke wapas aane ka intezaar shuru (purana timer ho to badal deta hai). */
@@ -569,7 +813,7 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     }
   }
 
-  private send(playerId: PlayerId, message: ServerMessage): void {
+  private send(playerId: PlayerId, message: ServerMessage | DrawGuessServerMessage): void {
     const socket = this.sockets.get(playerId);
     if (socket && socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));
   }

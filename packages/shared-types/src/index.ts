@@ -3,6 +3,8 @@
  * Yahan koi game logic nahi hai, sirf naam aur shapes.
  */
 
+export * from './draw-guess';
+
 export type PlayerId = string;
 
 export const ROLES = ['RAJA', 'MANTRI', 'SIPAHI', 'CHOR'] as const;

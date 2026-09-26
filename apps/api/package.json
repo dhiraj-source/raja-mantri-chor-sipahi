@@ -7,7 +7,8 @@
     "start": "node dist/main.js",
     "start:dev": "nest start --watch",
     "test": "vitest run",
-    "smoke": "node scripts/smoke-ws.mjs"
+    "smoke": "node scripts/smoke-ws.mjs",
+    "smoke:dg": "node scripts/smoke-dg.mjs"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.15",
@@ -15,6 +16,7 @@
     "@nestjs/platform-express": "^10.4.15",
     "@nestjs/platform-ws": "^10.4.22",
     "@nestjs/websockets": "^10.4.22",
+    "@rmc/draw-guess-engine": "0.1.0",
     "@rmc/game-engine": "0.1.0",
     "@rmc/shared-types": "0.1.0",
     "pg": "^8.23.0",

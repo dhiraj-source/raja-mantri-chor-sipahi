@@ -1,52 +1,63 @@
 # LAST WORK
 
-## Latest (RMC-0023 — sound packs part 2/2: animal sounds — DONE, Phase 2 item 4 complete)
-Owner said to just complete the feature myself instead of waiting for them to pick/send clips.
-Pixabay (the source verified earlier in RMC-0022) turned out to be Cloudflare bot-protected —
-direct download from this environment (no browser tool available here) was blocked (403).
-Found and used **OpenGameArt.org** instead — reachable directly, and checked each file's
-license tag on its page before downloading (not assumed): "Dog barking mono" (CC0) and
-"Kitten Mew" (CC0, single license). Both are real WAV files, verified by inspecting the RIFF/
-WAVE header after download, not just trusting the file extension.
+## Latest (RMC-0028 — Phase 3, Milestone 4 part 2/2: Draw & Guess i18n — English + Hindi)
+Continuing the same session as RMC-0024 through RMC-0027 with owner's "full hand to think and
+build, complete all progress and development steps." After reconnection hardening (RMC-0027),
+picked the next item from Milestone 4: the original spec explicitly asked for the new mode to
+support the existing app's localization architecture rather than hardcoding strings — Draw &
+Guess had been entirely English-only until now.
 
 **Built:**
-- `apps/web/public/audio/dog-bark.wav` (176KB) + `cat-meow.wav` (98KB) — real recorded clips.
-- `apps/web/src/audio/sounds.ts`: `ANIMAL_SOUNDS` map (`CORRECT: cat-meow` — cat "catches" the
-  Chor, `WRONG: dog-bark` — dog barks as the Chor gets away) + `AnimalSoundPlayer` — same
-  dependency-injected, mute-gated shape as `SoundPlayer`/`VoiceLinePlayer` (an `AudioElementLike`
-  interface real `HTMLAudioElement` matches, tests fake it). Caches one `Audio` object per file
-  (no re-creating on every play), volume 0.5, silently no-ops on any error (muted, unsupported,
-  play() rejected by the browser) so the game never breaks over audio.
-- `apps/web/src/audio/useSounds.ts`: `play(name)` now also plays the animal sound if one exists,
-  alongside the existing tone + voice line — same single mute toggle controls all three.
-- 6 new unit tests (plays only for mapped names, correct volume, muted = silent + no Audio
-  created, cached per src, never throws on null/error/rejected-play, every ANIMAL_SOUNDS path
-  matches a real audio file pattern). 283 tests total now (37 engine + 132 api + 114 web).
-  Build clean, lint clean.
-- Verified at runtime (not just build output): started the Vite dev server and curled both
-  `/audio/*.wav` URLs — both 200 OK, correct `Content-Type: audio/wav`, correct byte sizes.
-  Did NOT run the full real-headless-Chrome `ui:check` for this increment (needs Docker+
-  Postgres+API up too) — the new code follows the exact same try/catch-everything pattern as
-  the tone/voice-line players already verified that way in RMC-0014/0022, so this was judged
-  proportionate; owner can run `npm run ui:check` (or just play the game) to actually hear it.
+- ~60 new `dg.*` keys added to `apps/web/src/i18n/messages.ts`, in both `en` and `hi` — real
+  Hindi translations matching the tone of the existing RMCS strings in the same file, not
+  placeholders or machine-literal copies.
+- Every Draw & Guess component (`ModeSelect`, `DgHome`, `DgLobby`, `DgGameScreen` + its
+  `RoundResults`/`FinalResults` sub-components, `Toolbar`, `DgChatPanel`, `DgScoreboard`) now
+  calls the existing `useI18n()` hook and renders through `t()` — the SAME mechanism RMCS
+  already uses, not a separate system. No hardcoded English strings remain in the mode's UI.
+- Relied on the type system rather than manual checking for completeness: `hi` is declared as
+  `Record<MessageKey, string>`, so TypeScript itself refuses to compile if any key exists in one
+  language's object but not the other's.
 
-**Phase 2 item 4 (sound packs) is now fully DONE** — see
-DEVELOPMENT/PHASE_2_BOTS_AND_VOICE/STATUS.md.
+**Verified:**
+- Full repo build + lint + all 340 existing tests still pass (no new automated tests needed —
+  this is string-plumbing, and the en/hi type-parity check IS the meaningful test here).
+- **Real browser check, not just reading the code**: started the dev servers, drove a real
+  headless Chrome to the mode-select screen, clicked the existing language switch to Hindi, then
+  navigated into Draw & Guess's home screen. Confirmed via both a screenshot and a direct
+  `document.body.innerText` read that every visible string rendered correctly in Hindi — title,
+  back button, name field, settings toggle, create-room button, "or" divider, join button — with
+  no layout breakage and no console errors.
+- Re-ran the full English `scripts/ui-check-dg.mjs` end-to-end check afterward to confirm the
+  i18n wiring changed nothing about English-language behavior — it hadn't; every check still
+  passed exactly as before.
 
-## RMC-0022 (same session, before this — voice lines)
-PUBG/BGMI-style spoken lines ("Busted!"/"Escaped!"/"Victory!") via the browser's own
-text-to-speech on round-result/win moments. 277 tests at the time. See CHANGELOG.md for detail.
+**Draw & Guess is now playable end-to-end in either English or Hindi**, matching RMCS's own
+bilingual support.
+
+## RMC-0027 (same session, before this — reconnection hardening)
+Host-transfer-on-disconnect + grace-period auto-removal. See CHANGELOG.md for full detail.
+
+## RMC-0026 / RMC-0025 / RMC-0024 (same session, earlier)
+React UI, server core, pure engine foundation respectively. See CHANGELOG.md for full detail.
 
 ## Current phase
-PHASE 2 (DEVELOPMENT/PHASE_2_BOTS_AND_VOICE/STATUS.md) IN PROGRESS: all 5 checklist items are
-now DONE (bots, mixed rooms, queue names, sound packs, voice chat). **Phase is not "complete"**
-per the owner's standing instruction — new items can still be added here; nothing is currently
-queued.
+- **PHASE 2**: checklist fully DONE. Owner's standing instruction: still open, no new items queued.
+- **PHASE 3** (Draw & Guess): Milestones 1-3 done, Milestone 4 done (reconnection hardening +
+  i18n; spectators/private rooms still open — lower priority, not in the original spec's
+  Definition of Done), Milestone 5 not started (accessibility pass, voice chat integration). See
+  `DEVELOPMENT/PHASE_3_DRAW_AND_GUESS/STATUS.md` for the full checklist and design-decision record.
 
 ## Next step
-No blockers. Two things worth the owner's attention when convenient:
-1. **Render's free PostgreSQL expires ~2026-10-26** (owner said they'll handle this themselves).
-2. Try the new animal sounds in a real game (round-result / win moments) and confirm they
-   sound right — if the cat-meow/dog-bark mapping feels off, easy to swap or remap.
-Otherwise: waiting on the owner for the next feature/direction (Phase 2 checklist is fully
-done, so this is a natural point to decide what's next — more Phase 2 polish, or moving on).
+Re-checked the original 47-section spec's own "Definition of Done" checklist against what's
+built: every item on it is now satisfied for Draw & Guess (create/join rooms, lobby, host
+controls, ready system, drawer rotation, word choices, secret-word privacy, real-time drawing
+sync, guessing, server-side scoring, timers, round transitions, final scoreboard, reasonable
+disconnect/reconnect, host transfer, mobile UI, chat, anti-spam, basic anti-cheat, RMCS
+untouched, production build succeeds, tests pass, no console errors). What remains
+(spectators, private rooms, accessibility pass, voice chat) are enhancements beyond that
+checklist, not gaps in it — worth doing, but a natural point to check in with the owner on
+priority rather than continuing to assume. No blockers otherwise.
+
+Separately, still open (owner handling it themselves): Render's free PostgreSQL expires
+~2026-10-26.

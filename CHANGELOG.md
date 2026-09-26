@@ -862,3 +862,191 @@ None.
 - Only 2 animal sounds exist (not a full "pack") — more could be added the same way if the owner wants a bigger variety later.
 - Real audio files now exist in the repo for the first time (`apps/web/public/audio/`) — previously all audio was code-generated tones or TTS with zero files. Source: OpenGameArt.org, CC0, license verified per file at download time.
 
+# RMC-0024
+
+## Feature
+Phase 3 kickoff — Draw & Guess (Skribbl.io-style mode), Milestone 1: pure engine foundation
+
+## Status
+COMPLETE for Milestone 1 only. Phase 3 overall is NOT complete — see DEVELOPMENT/PHASE_3_DRAW_AND_GUESS/STATUS.md for the remaining milestones (NestJS wiring, React canvas UI, reconnection, polish).
+
+## What changed
+- Owner gave a full 47-section spec for a new Skribbl.io-inspired drawing-and-guessing game mode, to sit alongside (never replace) the existing Raja Mantri Chor Sipahi game, and said "full hand to think and build."
+- Inspected the existing architecture first (App.tsx routing-by-socket-state, single WebSocket gateway handling every message type, RoomsService/GameEngine separation, Tailwind+Framer Motion styling, mobile-first max-w-md layout) before writing any code, per the owner's own spec (Step 1-4) and this project's SAFE DEVELOPMENT RULE.
+- Given the size of the ask, broke Phase 3 into 6 milestones (tracked in DEVELOPMENT/PHASE_3_DRAW_AND_GUESS/STATUS.md) instead of attempting everything at once — consistent with CLAUDE.md's "build gradually, do not build everything at once."
+- Built Milestone 1 only this round: a brand-new, fully independent pure package `packages/draw-guess-engine` (mirrors `@rmc/game-engine`'s conventions: package.json/tsconfig/vitest config, ESLint-blocked from importing NestJS/React/pg/redis/ws). It has zero dependency on the RMCS game-engine and touches no existing file's logic — chosen deliberately so this milestone cannot break the existing game.
+- `words.ts`: an original word bank (~150 words, 16 categories including Indian Culture/Food/Places/Festivals, plus generic — not trademarked — Bollywood and Cricket vocabulary), custom-word validation (length/duplicate/count caps), and word-choice picking that avoids repeats within a game.
+- `guess.ts`: server-authoritative guess normalization (case/space/punctuation/diacritics-insensitive by default, or exact) — the only place "is this guess correct" is decided.
+- `mask.ts`: masked-word display plus a time-based hint system (configurable interval and max-reveal-fraction, or fully disabled).
+- `scoring.ts`: guesser points (decreasing by rank, floored at a minimum) and drawer points (based on how many guessed correctly) — one function each, config-driven, not hard-coded anywhere.
+- `state.ts`: the actual state machine — `LOBBY → COUNTDOWN → CHOOSING_WORD → DRAWING → ROUND_RESULTS → (next turn | GAME_RESULTS) → FINISHED`, deterministic round-robin drawer rotation, and — the security-critical piece — `getPlayerView(state, viewerId, now)`, the single function that produces client-facing data and is the only place the secret word or word-choices are ever allowed to appear (only for the current drawer). A test explicitly serializes a non-drawer's view with `JSON.stringify` and asserts the real word string is absent, not just structurally hidden.
+- Timers (turn duration, word-select deadline, round-result display time) are deliberately NOT inside the engine — it only exposes pure functions (`endTurn`, `autoSelectWord`, `beginNextTurn`); owning the actual `setTimeout`s is left to the NestJS gateway/service layer in a later milestone, exactly like RMCS's `RoomsGateway` already does for its own timers.
+
+## Reason
+Owner's Phase 3 request; starting with the safest, most isolated foundation (pure logic, zero framework wiring) so real progress happens immediately without any risk to the live, working RMCS game.
+
+## Database
+None yet (Milestone 1 has no server/storage wiring).
+
+## API
+None yet.
+
+## WebSocket
+None yet.
+
+## Tests
+- New: 50 tests in `packages/draw-guess-engine` (guess 6, mask 9, scoring 4, words 12, state 19). All pass.
+- Regression: full repo build (`npm run build`) and the entire existing test suite re-run (engine unaffected, api 106, web 114) — all still pass. RMCS was not touched.
+
+## Known limitations
+- Not playable yet — no NestJS module, no shared-types wire protocol, no React UI. This is pure, unwired logic (Milestone 1 of 6 in Phase 3).
+- Guess matching has no fuzzy/typo-tolerance yet (spec allowed this as optional) — only exact and normalized-exact matching for now.
+- Word bank is a starting set (~150 words), not exhaustive — easy to extend, same `WordEntry` shape.
+
+# RMC-0025
+
+## Feature
+Phase 3 — Draw & Guess, Milestone 2: server core (wire protocol + NestJS module, full room + game loop)
+
+## Status
+COMPLETE for Milestone 2 (server side is now fully playable via raw WebSocket). Phase 3 overall NOT complete — no React UI yet (Milestone 3).
+
+## What changed
+- Restructured the wire-visible types to match the existing convention exactly: `DrawGuessGameView`, `DrawGuessTurnResult`, and `DrawGuessCorrectGuesser` moved from the engine package into `packages/shared-types/src/draw-guess.ts` (a new file, re-exported from `index.ts`), mirroring how RMCS's `PlayerGameView`/`RoundResult` live in shared-types and the engine only imports and returns them. Also added `DrawGuessRoomView`, `DrawGuessSettings`, `DrawGuessChatEntry`, and the full `DrawGuessClientMessage`/`DrawGuessServerMessage` protocol (new `DG_*` event names, distinct from every RMCS event).
+- New NestJS module `apps/api/src/draw-guess/` (`DrawGuessService` + `DrawGuessModule`), fully independent from `RoomsService` — its own in-memory room map, own code generation. Covers the whole lobby (create/join/leave/ready/kick/update-settings, host transfer on leave) and the whole game loop (start → countdown → choosing-word → drawing → round-results → next turn → game-results), all server-authoritative (server decides the secret word, validates every guess, computes every score).
+- One text box does both chat and guessing — matches how real drawing-guessing games actually work. The service decides per-message whether it's a genuine guess attempt (non-drawer, still drawing, hasn't guessed correctly yet) or plain chat; a correct guess becomes a `CORRECT_GUESS` entry that never carries the guessed text, an incorrect one becomes a normal `CHAT` entry (profanity-censored via a new small `profanity.ts` blocklist, also applied to host-supplied custom words).
+- Wired the new `DG_*` message handlers directly into the **existing** `RoomsGateway` (no second gateway/socket — this was a deliberate architectural decision recorded in the Phase 3 status file, since NestJS's WS adapter can't cleanly run two gateways on the same path). Timer design: a single generic `scheduleDgTimer(code)` reads the state's `turnEndsAt` and reschedules on every phase change; when it fires, it re-checks the current phase (since state may have changed) and calls the matching transition (`beginNextTurn` / `autoSelectWord` / `endTurn`). Reused the existing `RateLimiter` class for chat-specific rate limiting (drawing-stroke spam is already covered by the pre-existing global per-connection message limiter).
+- Disconnect handling (this milestone's scope only): if the current drawer disconnects mid-turn, the turn ends immediately rather than leaving the game stuck; other players just show as disconnected. RMCS's fuller grace-timer/vote-to-cancel system is intentionally deferred to a later milestone — noted explicitly, not silently skipped.
+- **Two real bugs were found by end-to-end testing that the unit tests alone had missed** (this is exactly why the project's real-server-smoke-test habit exists): (1) `apps/api/package.json` was missing an explicit `@rmc/draw-guess-engine` dependency (the build had quietly succeeded anyway via npm workspace hoisting, which isn't something to rely on) — fixed. (2) When every remaining player guesses correctly in a single message, the turn ends immediately inside that same request, producing two chat entries at once (`CORRECT_GUESS` then a "the word was..." system message) — the gateway was only broadcasting the *last* new entry, so `CORRECT_GUESS` silently never reached any client. Fixed by broadcasting every entry the chat/guess call actually added, not just the newest one.
+
+## Reason
+Owner's Phase 3, continuing Milestone 1 with the server-side "spine" of the whole feature — the point where Draw & Guess becomes genuinely playable (over raw WebSocket) even before any UI exists, which is also the earliest point real integration bugs could be caught.
+
+## Database
+None (in-memory rooms, same as RMCS's current state).
+
+## API
+None (no new HTTP endpoints — Draw & Guess is entirely WebSocket, like RMCS).
+
+## WebSocket
+New events on the existing `/ws` gateway: `DG_CREATE_ROOM`, `DG_JOIN_ROOM`, `DG_LEAVE_ROOM`, `DG_READY`, `DG_UPDATE_SETTINGS`, `DG_KICK_PLAYER`, `DG_START_GAME`, `DG_SELECT_WORD`, `DG_CHAT`, `DG_STROKE`, `DG_END_GAME`, `DG_RETURN_TO_LOBBY` (client→server) and `DG_ROOM_STATE`, `DG_GAME_VIEW`, `DG_STROKE`, `DG_CHAT_MESSAGE`, `DG_ERROR` (server→client).
+
+## Tests
+- New: 15 tests in `apps/api/test/draw-guess.service.test.ts` (lobby rules, full turn lifecycle, drawer-can't-guess, already-guessed-becomes-chat, host force-end, disconnect handling, and a security test that serializes a non-drawer's view and asserts the real word string is absent).
+- New: `apps/api/scripts/smoke-dg.mjs` — a real end-to-end smoke test (2 real WebSocket clients against a real running server) covering the full turn: create/join/ready/start, word-choice privacy, drawing-phase word privacy (including a raw wire-payload check), wrong guess as chat, correct guess scoring, and automatic round transition. This is what caught bug #2 above — the service-level unit tests did not, because they check state directly rather than what actually gets broadcast.
+- Regression: full repo build + lint + entire existing test suite (37 engine + 50 draw-guess-engine + 121 api + 114 web = 322) all still pass. Additionally re-ran the **existing** `scripts/smoke-ws.mjs` (RMCS's own real-server smoke test) against the same modified gateway to directly confirm the two game modes coexist correctly on one connection — it passed in full, RMCS is untouched.
+
+## Known limitations
+- No React UI yet — only reachable via raw WebSocket messages (this smoke test is effectively "how to play it today," for anyone curious, until Milestone 3 lands).
+- Disconnect handling is basic (see "What changed" above) — no grace timer, no vote-to-cancel like RMCS has; only the drawer-disconnect-ends-turn safety net exists so far.
+- Room settings (max players, rounds, word-select count, draw time, custom words) are fully wired and validated; other spec-requested settings (spectators, late joining, private room/password, per-language word lists) are not implemented yet.
+- Custom words and chat share one basic, non-exhaustive profanity blocklist (English + a few Hindi terms) — not a comprehensive or multi-language filter.
+
+# RMC-0026
+
+## Feature
+Phase 3 — Draw & Guess, Milestone 3: React UI (mode select through final scoreboard) — now playable in a real browser
+
+## Status
+COMPLETE for Milestone 3. Phase 3 overall NOT complete — reconnection hardening, i18n, spectators, private rooms, accessibility pass, and voice chat for this mode are still open (Milestones 4-5).
+
+## What changed
+- New `apps/web/src/draw-guess/` module (10 files): `dgClientState.ts` (a reducer mirroring RMCS's `clientState.ts`), `useDrawGuessSocket.ts` (hooked in at `App.tsx` level, not nested inside the mode's own component — so a page reload/reconnect shows the right room immediately from server state, without waiting on a client-only "which mode did you pick" flag), `ModeSelect.tsx`, `DgHome.tsx`, `DgLobby.tsx` (room code + copy/share, ready toggle, kick, live settings, start), `DgGameScreen.tsx` (every phase: countdown, choosing-word, drawing, round-results, game-results), `Canvas.tsx`, `Toolbar.tsx`, `DgChatPanel.tsx`, `DgScoreboard.tsx`, plus two small pure helpers (`strokeBatching.ts`, `dgAvatar.ts`).
+- `Canvas.tsx` is a real `<canvas>` with pointer-event drawing: local strokes are drawn immediately for responsiveness, then batched (60ms) and sent over the wire so a fast pointer doesn't flood the socket; remote strokes are painted incrementally (only the new ones, not a full redraw) via a small ref-tracked counter. Includes a real stack-based flood fill with color tolerance (to handle anti-aliased stroke edges) for the paint-bucket tool, and resets to blank locally the instant a new turn begins (not waiting for a server round-trip) via a turn-number-watching effect in the socket hook.
+- `App.tsx` gained a `mode` (menu/rmcs/draw_guess) selector, but screen choice stays state-driven wherever possible: if the Draw & Guess socket state already has a room (e.g., after a reload restores the session), those screens show regardless of what `mode` currently is. The canvas screen specifically widens the outer container (`max-w-4xl` vs the app's normal `max-w-md`) since a drawing surface needs real space; every other screen is untouched.
+- `useGameSocket.ts`, `clientState.ts`, and `useVoiceChat.ts` had their message types widened to `ClientMessage | DrawGuessClientMessage` / `ServerMessage | DrawGuessServerMessage` — the one shared WebSocket carries both game modes' messages, and voice chat's raw-message listener (which only ever looks for `VOICE_*` events) needed its declared type updated to keep compiling against the wider union, though its behavior is unchanged.
+- `DrawGuessGameView.players[]` gained a `name` field (previously id/score/connected/hasGuessedCorrectly only) — the UI needs to display who's who. Fixed properly at the source rather than patched in the UI: the engine's `createGame` now takes `PlayerInfo[]` (id+name) instead of bare `PlayerId[]`, matching the exact convention RMCS's own engine already uses for the same reason.
+
+## Reason
+Owner's Phase 3, continuing Milestones 1-2 with the piece that actually makes the mode playable by a real person rather than only over raw WebSocket messages.
+
+## Database
+None.
+
+## API
+None.
+
+## WebSocket
+No new events (uses the full `DG_*` protocol from RMC-0025).
+
+## Tests
+- New: 8 tests for `strokeBatching.ts` (batching/throttling timing, point normalization/clamping) and 7 tests for `dgClientState.ts` (reducer behavior, DG-vs-RMCS message discrimination). Total suite: 50 (draw-guess-engine) + 37 (game-engine) + 121 (api) + 129 (web) = 337, all passing.
+- **Real end-to-end browser verification**, not just unit tests: a new `scripts/ui-check-dg.mjs` drives a real headless Chrome instance through the entire flow — mode select, room creation, two bot players joining and readying up, starting the game, the drawer (deterministically the host on turn 0) getting 3 word choices, selecting one, **an actual mouse-drawn stroke via Chrome DevTools Protocol's `Input.dispatchMouseEvent`**, confirming both guessers' real WebSocket clients received the resulting `DG_STROKE` messages, a direct wire-payload check that a guesser's `GAME_VIEW` never contains the real word as a substring, a wrong guess appearing as normal chat, a correct guess appearing as a `CORRECT_GUESS` entry, the turn auto-ending once everyone's guessed, and the round-results screen showing the revealed word and per-player points — with screenshots at every step and a check for zero browser console errors and zero horizontal overflow at both a 390px mobile width and a 1200px desktop width.
+- **This real-browser check caught two bugs the unit tests had completely missed** (the layered-verification habit paying off again, same as it did in RMC-0025): (1) the app's `<h1>` title stayed hardcoded to "Raja Mantri Chor Sipahi" even while playing Draw & Guess — visible immediately in a screenshot, invisible to any text-content-based automated check that wasn't specifically looking for it; (2) the chat panel was rendering completely empty throughout the whole game — system messages like "X joined the game" and "Game started" were being generated and stored server-side, but only the `DG_CHAT` handler ever broadcast newly-added chat entries, so every other action that generates a system message (join, leave, start, kick, every timer-driven turn transition) never sent it to any client. Fixed by moving chat-broadcasting into the one function (`broadcastDgRoom`) that already runs after every Draw & Guess action, tracking per-room how many entries have been sent so far and pushing only the new ones — a single, central fix rather than one at every call site.
+
+## Known limitations
+- Draw & Guess UI text is all plain English — not yet wired into the existing `en`/`hi` i18n dictionary system (deliberately deferred so the UI could be built and verified first; wiring it in later is mechanical).
+- No RMCS-grade reconnection (grace timer, disconnect vote) for Draw & Guess yet — only the drawer-disconnect-ends-turn safety net and immediate reconnect-restores-the-room behavior exist so far (both verified).
+- No spectator mode, private rooms/passwords, or late-joining yet — settings for these aren't exposed.
+- No voice chat integration for Draw & Guess (RMCS-only feature currently).
+- No accessibility pass yet beyond basic `aria-label`/`aria-pressed` attributes already present on interactive elements.
+- Custom words can only be set via the wire protocol's `settings.customWords` field — no UI text area to enter them yet.
+
+# RMC-0027
+
+## Feature
+Phase 3 — Draw & Guess, Milestone 4 (part 1/2): reconnection hardening — host transfer on disconnect + grace-period auto-removal
+
+## Status
+COMPLETE for this part. Milestone 4's other parts (i18n, spectators, private rooms) still open.
+
+## What changed
+- `DrawGuessService.setConnected` now transfers the host role immediately if the disconnecting player was the host, picking another connected player and posting a system chat message ("X is now the host") — previously host transfer only happened on an explicit `DG_LEAVE_ROOM`, so a host whose connection merely dropped (network blip, closed laptop) stayed "host" indefinitely with nobody able to act.
+- Added a grace-period-then-remove mechanism for Draw & Guess disconnects, mirroring RMCS's existing `armGrace`/`expire` pattern in `RoomsGateway` (same `RECONNECT_GRACE_MS` env var, same idea) but named separately (`armDgGrace`/`expireDgGrace`) since it's simpler: on disconnect, arm a timer; on reconnect, cancel it; if it fires, remove the player via the existing `leaveRoom` path (which itself handles further host transfer if needed).
+- Deliberately did NOT build RMCS's fuller "remaining players vote WAIT or CANCEL" system for this mode. Reasoned through and decided grace-then-auto-remove is "reasonable" disconnect handling for a casual, fast-turn-rotating drawing game — the vote system's complexity exists in RMCS because losing one specific secret role (Mantri/Chor) can matter a lot; Draw & Guess's turns rotate every ~60-75 seconds regardless, so simply freeing the seat is enough. Documented as an intentional simplification, not an oversight.
+- Documented (not fixed, deliberately out of scope for this pass) one small remaining edge case: if a non-drawer player is grace-removed mid-game, the pure engine's `playerOrder` isn't live-resynced with the room roster (it's a snapshot taken at game start, same design as RMCS's engine), so if that removed player's turn comes up later, one turn plays out with a "phantom" drawer nobody controls — a blank canvas that nobody draws on until the word-select and draw timers naturally time out. Self-recovering (costs one wasted turn, never gets the game stuck), so left as a known limitation rather than doing the deeper surgery (live playerOrder resync) that fixing it properly would need.
+
+## Reason
+Continuing Phase 3's Milestone 4; this was the highest-value remaining gap against the original spec's own "Definition of Done" checklist ("Disconnect/reconnect works reasonably," "Host transfer works").
+
+## Database
+None.
+
+## API
+None.
+
+## WebSocket
+No new events — `setConnected`'s behavior changed, not the protocol.
+
+## Tests
+- New: 3 unit tests in `apps/api/test/draw-guess.service.test.ts` (host disconnects and another player becomes host; a lone player disconnecting has no eligible replacement and correctly stays host; a non-host disconnecting never changes the host). 340 tests total across the repo now, all passing.
+- Extended `apps/api/scripts/smoke-dg.mjs` with a new real end-to-end scenario: a genuine WebSocket close (not a `DG_LEAVE_ROOM` message) for the host, confirming another real client sees the host change immediately; then closing the new host's connection too and confirming that after the (shortened, via `RECONNECT_GRACE_MS`) grace period, the last remaining real client sees that seat actually removed from the room. Ran it twice in a row to confirm it isn't flaky.
+- Re-ran RMCS's own `smoke-ws.mjs` against the same modified gateway (with both `RECONNECT_GRACE_MS` and `VOTE_DURATION_MS` shortened, matching how that test has always needed to be run) — passed in full, RMCS's own disconnect/vote/reconnect behavior is untouched.
+
+## Known limitations
+- The "phantom turn" edge case described above (a grace-removed non-drawer's later turn plays out with nobody drawing) is accepted, not fixed, for now.
+- Still no RMCS-style vote-to-cancel-the-game option for Draw & Guess — by design, not an oversight (see "What changed").
+- i18n, spectators, private rooms/passwords, late-joining, accessibility pass, and voice chat integration for this mode remain open (Milestone 4's other parts, and Milestone 5).
+
+# RMC-0028
+
+## Feature
+Phase 3 — Draw & Guess, Milestone 4 (part 2/2): i18n — English + Hindi
+
+## Status
+COMPLETE for this part. Milestone 4's other parts (spectators, private rooms) still open.
+
+## What changed
+- Added roughly 60 new `dg.*` translation keys to `apps/web/src/i18n/messages.ts`, in both `en` and `hi` — real Hindi translations (not placeholders or copies), matching the tone and phrasing already established by the existing RMCS strings in the same file.
+- Every Draw & Guess component (`ModeSelect`, `DgHome`, `DgLobby`, `DgGameScreen` and its `RoundResults`/`FinalResults` sub-components, `Toolbar`, `DgChatPanel`, `DgScoreboard`) now calls `useI18n()` and renders through `t()` — no hardcoded English strings remain anywhere in the mode's UI.
+- Relied on the existing type system to guarantee completeness rather than checking by hand: `hi` is declared as `Record<MessageKey, string>`, so TypeScript itself refuses to compile if any key added to `en` is missing from `hi` (or vice versa) — this caught nothing missing on the first attempt, but it's the mechanism that would have caught it if it had.
+
+## Reason
+Continuing Phase 3's Milestone 4; the original spec explicitly asked for this mode to support the existing application's localization architecture rather than hardcoding UI strings.
+
+## Database
+None.
+
+## API
+None.
+
+## WebSocket
+None.
+
+## Tests
+- No new automated tests were added (this change is translation-string plumbing, not new logic) — the existing `en`/`hi` type-parity check IS the test, enforced at compile time on every build. Full repo build + lint + all 340 existing tests re-run and pass.
+- **Verified in a real browser, not just by reading the code**: started the dev servers, drove a real headless Chrome to the mode-select screen, clicked the existing language switch to Hindi, then navigated into Draw & Guess's home screen — confirmed via both a screenshot and a direct `document.body.innerText` read that every visible string (title, back button, name field, settings toggle, create-room button, "or" divider, join button) rendered correctly in Hindi, with no layout breakage and no console errors. Also re-ran the full English `scripts/ui-check-dg.mjs` end-to-end check to confirm the i18n wiring didn't change any English-language behavior (it hadn't — all checks passed unchanged).
+
+## Known limitations
+- Spectators, private rooms/passwords, late-joining, an accessibility pass, and voice chat integration for this mode remain open (the rest of Milestone 4, and Milestone 5).
+

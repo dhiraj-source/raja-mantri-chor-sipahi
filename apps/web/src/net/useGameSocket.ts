@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react';
-import { RECONNECT_TOKEN_PARAM, type ClientMessage, type ServerMessage } from '@rmc/shared-types';
+import {
+  RECONNECT_TOKEN_PARAM,
+  type ClientMessage,
+  type DrawGuessClientMessage,
+  type DrawGuessServerMessage,
+  type ServerMessage,
+} from '@rmc/shared-types';
 import {
   MAX_RECONNECT_ATTEMPTS,
   REPLACED_CLOSE_CODE,
@@ -39,7 +45,7 @@ export function useGameSocket() {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Kuch messages (voice signaling) reducer/state me nahi jaate, seedha yahan se sunte hain —
   // taaki har ICE candidate par poora app re-render na ho.
-  const rawListenersRef = useRef(new Set<(message: ServerMessage) => void>());
+  const rawListenersRef = useRef(new Set<(message: ServerMessage | DrawGuessServerMessage) => void>());
   // Purane socket ke late events ko ignore karne ke liye.
   const attemptIdRef = useRef(0);
   const retriesRef = useRef(0);
@@ -96,7 +102,9 @@ export function useGameSocket() {
     };
   }, [open]);
 
-  const send = useCallback((message: ClientMessage) => {
+  // Ek hi socket dono game modes serve karta hai (koi doosra connection nahi) — isliye send()
+  // dono message-universes accept karta hai; server hi decide karta hai kaunsa event kis mode ka hai.
+  const send = useCallback((message: ClientMessage | DrawGuessClientMessage) => {
     const socket = socketRef.current;
     if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
   }, []);
@@ -107,7 +115,7 @@ export function useGameSocket() {
   const dismissInvite = useCallback((key: number) => dispatch({ type: 'DISMISS_INVITE', key }), []);
 
   /** Listener register karo (VOICE_SIGNAL jaisi cheezein). Cleanup function wapas milta hai. */
-  const onRawMessage = useCallback((listener: (message: ServerMessage) => void) => {
+  const onRawMessage = useCallback((listener: (message: ServerMessage | DrawGuessServerMessage) => void) => {
     rawListenersRef.current.add(listener);
     return () => rawListenersRef.current.delete(listener);
   }, []);

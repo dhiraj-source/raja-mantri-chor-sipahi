@@ -23,8 +23,9 @@ export default tseslint.config(
     },
   },
   {
-    // GameEngine pure rahna chahiye: koi framework import nahi.
-    files: ['packages/game-engine/src/**/*.ts'],
+    // GameEngine pure rahna chahiye: koi framework import nahi. Draw & Guess engine bhi waisi hi
+    // pure package hai (RMCS engine se alag, par same rule apply hoti hai).
+    files: ['packages/game-engine/src/**/*.ts', 'packages/draw-guess-engine/src/**/*.ts'],
     rules: {
       'no-restricted-imports': [
         'error',

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { PlayerId, RoomPlayerView, ServerMessage } from '@rmc/shared-types';
+import type { DrawGuessServerMessage, PlayerId, RoomPlayerView, ServerMessage } from '@rmc/shared-types';
 import {
   VoiceRoom,
   defaultPeerConnectionFactory,
@@ -15,8 +15,12 @@ interface Params {
   players: readonly RoomPlayerView[] | null;
   send: (toPlayerId: PlayerId, signal: VoiceSignal) => void;
   sendMute: (muted: boolean) => void;
-  /** VOICE_SIGNAL/VOICE_MUTE server messages yahan se milte hain (clientState se alag rakha hai). */
-  onRawMessage: (listener: (message: ServerMessage) => void) => () => void;
+  /**
+   * VOICE_SIGNAL/VOICE_MUTE server messages yahan se milte hain (clientState se alag rakha hai).
+   * Ek hi socket Draw & Guess ke DG_* messages bhi isi se guzarta hai — voice chat unhe chhoo
+   * nahi paata (sirf VOICE_* check karta hai), isliye type yahan dono union accept karta hai.
+   */
+  onRawMessage: (listener: (message: ServerMessage | DrawGuessServerMessage) => void) => () => void;
 }
 
 /**
