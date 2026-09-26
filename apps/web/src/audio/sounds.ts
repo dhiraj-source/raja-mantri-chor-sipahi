@@ -60,6 +60,17 @@ export const SOUNDS: Record<SoundName, readonly Tone[]> = {
   ],
 };
 
+/**
+ * PUBG/BGMI-jaisi chhoti announcer-style voice lines — koi audio file nahi, browser ka apna
+ * text-to-speech "bolta" hai. Sirf bade round-result/win moments par (baar-baar tap hone
+ * wali reaction emojis par nahi, warna bolna hi bolna ho jaata).
+ */
+export const VOICE_LINES: Partial<Record<SoundName, string>> = {
+  CORRECT: 'Busted!',
+  WRONG: 'Escaped!',
+  WIN: 'Victory!',
+};
+
 // ---- Minimal audio interfaces: asli AudioContext inse match karta hai, tests me fake chalta hai ----
 export interface ParamLike {
   setValueAtTime(value: number, time: number): unknown;
@@ -138,6 +149,45 @@ export class SoundPlayer {
       if (this.ctx?.state === 'suspended') void this.ctx.resume().catch(() => undefined);
     } catch {
       // audio nahi hai: theek hai
+    }
+  }
+}
+
+// ---- Voice lines: text-to-speech, asli SpeechSynthesis inse match karta hai, tests me fake ----
+export interface SpeechUtteranceLike {
+  text: string;
+  rate: number;
+  pitch: number;
+  volume: number;
+}
+export interface SpeechSynthesisLike {
+  speak(utterance: SpeechUtteranceLike): void;
+}
+
+/** Voice-line bolta hai (agar us naam ke liye koi line ho). Muted ho ya TTS available na ho to chup. */
+export class VoiceLinePlayer {
+  constructor(
+    private readonly getSynth: () => SpeechSynthesisLike | null,
+    private readonly createUtterance: (text: string) => SpeechUtteranceLike,
+    private readonly isMuted: () => boolean,
+  ) {}
+
+  /** Bola gaya to true. */
+  speak(name: SoundName): boolean {
+    if (this.isMuted()) return false;
+    const line = VOICE_LINES[name];
+    if (!line) return false;
+    try {
+      const synth = this.getSynth();
+      if (!synth) return false;
+      const utterance = this.createUtterance(line);
+      utterance.rate = 1.1; // thoda tez, announcer jaisa punchy
+      utterance.pitch = 0.8; // thoda bhaari
+      utterance.volume = 0.9;
+      synth.speak(utterance);
+      return true;
+    } catch {
+      return false;
     }
   }
 }

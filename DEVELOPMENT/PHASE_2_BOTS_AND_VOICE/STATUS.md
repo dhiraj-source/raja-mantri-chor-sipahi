@@ -16,16 +16,20 @@ ek-doosre se awaaz se jud sakein.
 | 1 | Quick play with bots (single player, bots fill the room) | ☑ DONE | RMC-0019 |
 | 2 | Room create: host bots se khaali seats bhar sake | ☑ DONE | RMC-0019 |
 | 3 | Lobby/queue me connected/waiting players ke **naam** dikhein (sirf count nahi) | ☑ DONE | RMC-0019 |
-| 4 | Sound packs: animal sounds + voice-line style reactions | ⏸ WAITING ON OWNER | — |
+| 4 | Sound packs: animal sounds + voice-line style reactions | ◐ PARTIAL — voice-lines DONE, animal sounds ⏸ WAITING ON OWNER | RMC-0022 |
 | 5 | Live voice chat (WebRTC mesh, STUN only), per-player mute/unmute | ☑ DONE | RMC-0020 |
 | — | *(aage jo bhi naye features aayenge, yahan neeche add honge)* | | |
 
 ## Decisions (confirmed by owner)
 
 ### #4 — Sound/voice packs: **owner khud audio files dega**
-Asli PUBG voice-lines copyrighted hain, unhe copy/use nahi kar sakte. Owner ne kaha ki khud
-royalty-free/apne .mp3 files denge. **Blocked on: files abhi tak nahi mile.** Jab milein,
-inhe kis naam/folder me daalna hai (convention) yahan likha jayega, phir wire-up hoga.
+Asli PUBG voice-lines copyrighted hain, unhe copy/use nahi kar sakte. Owner ne khud PUBG/BGMI
+MP3 download karke try kiya, wahi nateeja nikla — copyright issue. **Updated decision
+(RMC-0022): voice-lines ke liye text-to-speech (koi file nahi, koi copyright risk nahi) —
+ban gaya, DONE.** Animal sounds ke liye TTS kaam nahi aata (bhaunk/mya u nahi kar sakta) —
+uske liye Pixabay ka sound-effects library verify kiya (free, commercial-use OK, attribution
+nahi chahiye, signup nahi chahiye) — link diya gaya hai, owner specific clips choose karke
+bhejega, tab wire hoga. **Blocked on: owner ke clips abhi tak nahi mile.**
 
 ### #5 — Live voice chat: **WebRTC mesh, sirf public STUN (free), koi TURN nahi**
 Owner ne free/simple tarika chuna — 4 players ke liye mesh chalta hai. Trade-off: kuch
@@ -89,3 +93,13 @@ aur agar us doosre ne pehle offer bheja tha jo abhi tak connect nahi hua, wo apn
 dobara bhej deta hai. Verified: 3 naye unit tests + ek naya real do-headless-Chrome test
 jisme jaan-boojh kar A pehle join karta hai, 4 second ruk kar B join karta hai — dono
 bina reload ke connect ho gaye.
+
+### Sound packs, part 1/2: voice lines (RMC-0022) — implemented
+- `VoiceLinePlayer` (`apps/web/src/audio/sounds.ts`): round-result/win par chhoti spoken line
+  ("Busted!"/"Escaped!"/"Victory!") — browser ka apna text-to-speech (`speechSynthesis`),
+  koi audio file nahi. Reaction emojis par nahi bolta (har tap par bolna shuru ho jaata to
+  irritating ho jaata) — sirf bade moments par, jaise asli game announcer voice lines.
+  Same mute button dono (tone + voice) control karta hai.
+- Animal sounds abhi bhi baaki hain — Pixabay (pixabay.com/sound-effects) verify kiya hua
+  free/safe source hai (commercial use OK, attribution/signup nahi chahiye); owner clips
+  choose karke bheje to turant wire ho jayega.

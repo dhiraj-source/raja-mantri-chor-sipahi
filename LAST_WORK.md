@@ -1,58 +1,50 @@
 # LAST WORK
 
-## Latest (RMC-0021 — voice chat bugfix: reload no longer needed)
-Owner tried voice chat (RMC-0020) for real and reported: "need to reload for the voice chat
-after enable mic." Real bug, found by re-reading `apps/web/src/voice/webrtc.ts` carefully
-(not guessed):
+## Latest (RMC-0022 — sound packs part 1/2: TTS voice lines)
+Owner tried downloading real PUBG/BGMI voice-line MP3s and correctly concluded they can't be
+used (copyrighted), and asked for a free alternative. Gave two options via AskUserQuestion;
+owner picked the recommended one: TTS for voice lines + search for a free/CC0 source for
+animal sounds.
 
-**Root cause:** two players don't usually click "Join voice chat" at the exact same instant.
-Whichever one joins *first* might already be the designated offer-sender (`shouldInitiate`:
-the lexicographically smaller `PlayerId` always offers). That player sends its offer
-immediately — but the second player hasn't joined voice chat yet, so nothing on their end is
-listening (`roomRef.current` is still `null`), and the offer is silently dropped. The first
-player marks that peer as "connecting" and never tries again. The only way to force a fresh,
-correctly-timed attempt was a full page reload.
+**Built (voice lines):**
+- `apps/web/src/audio/sounds.ts`: `VOICE_LINES` map (`CORRECT: 'Busted!'`, `WRONG: 'Escaped!'`,
+  `WIN: 'Victory!'`) + `VoiceLinePlayer` — same dependency-injected shape as the existing
+  `SoundPlayer` (`SpeechSynthesisLike`/`SpeechUtteranceLike` interfaces), so it's unit-testable
+  without a real browser, same as every other audio piece in this project.
+- `apps/web/src/audio/useSounds.ts`: `play(name)` now also speaks the line if one exists.
+  Same mute toggle controls both tones and voice — no new setting, no new UI.
+- Deliberately only on round-result/win (not every reaction emoji tap) — a spoken line on
+  every single tap would get old fast; the big moments are where a PUBG-style callout fits.
+- 3 new unit tests (speaks only for names with a line; silent + never touches the synth when
+  muted; never crashes with no TTS support or a throwing synth). 277 tests total now
+  (37 engine + 132 api + 108 web). Build + lint clean.
 
-**Fix:** added a `ready` signal (just a new case inside the existing opaque `VoiceSignal`
-payload — no server/gateway change needed). Whenever a player creates a *passive* connection
-(they're not the initiator), they now also send `ready` to announce "I'm listening now." When
-the designated initiator receives `ready` for a peer it already tried, it resends its cached
-offer (`peer.pc.localDescription`) instead of waiting forever; if it hasn't tried yet, it
-connects fresh. Guarded so an already-`connected` peer doesn't get a disruptive redundant
-resend.
+**Researched (animal sounds, not yet built):** searched and verified (not guessed) a safe free
+source: **Pixabay's sound-effects library** (pixabay.com/sound-effects) — checked its actual
+Content License: commercial use OK, no attribution, no signup needed to download MP3s; the
+only restriction is not reselling a file unchanged as a standalone product, which doesn't apply
+to using one inside the game. Also checked Kenney.nl's "Animal Pack" (looked promising by
+name) and found it's actually visual sprites, not audio — ruled out after checking, not
+assumed. Nothing downloaded yet — waiting on the owner to pick specific clips (e.g. dog bark,
+cat meow) and send them over; I'll wire them in once they arrive.
 
-**Verified for real, two ways:**
-1. Unit tests (`apps/web/test/voice.test.ts`, +3): the exact staggered-join scenario end to
-   end (A's offer "lost", B joins later and sends `ready`, A resends, B answers), plus two
-   guard tests (no resend once connected; fresh-connect if we never tried). One pre-existing
-   test's assertion was stale (it expected the passive side to send *nothing*, no longer true)
-   and was corrected, not weakened.
-2. A **new** two-headless-Chrome check (fake mic devices, real ICE/DTLS) that specifically
-   reproduces the reported bug shape: player A joins voice chat, waits 4 real seconds, *then*
-   player B joins. Confirmed both sides reach a connected state with zero console errors and
-   no reload — this exact scenario is why the earlier RMC-0020 verification (which joined both
-   sides close together in time) missed the bug in the first place.
-
-274 unit tests pass (37 engine + 132 api + 105 web). Build + lint clean.
-
-## Sound packs (item 4) — owner tried, still blocked, needs a decision
-Owner tried to download real PUBG/BGMI character voice-line MP3s and (correctly) concluded
-they can't be legally used/redistributed (copyrighted), and asked me to find something similar
-that's free. Nothing implemented yet — this needs the owner to pick a direction before I build
-anything, so I asked (see the question I raised this same turn): my recommendation is the
-browser's built-in text-to-speech (`SpeechSynthesisUtterance`) for *voice lines* (zero files,
-zero copyright risk, PUBG/BGMI-style phrasing but original wording, entirely code — no asset
-sourcing needed), plus a separate, smaller decision for *animal sounds* specifically (TTS can't
-bark like a dog — that needs real free/CC0 sound-effect files, e.g. from Kenney.nl or Pixabay,
-which I can look for if the owner wants me to, or the owner can keep sourcing their own).
+## RMC-0021 (this same session, voice chat bugfix — done before this)
+Owner reported voice chat needed a page reload to connect. Root cause: staggered joins — the
+earlier joiner could already be the designated offer-sender and send its offer before the
+later joiner was listening; that offer was silently dropped and never retried. Fixed with a
+`ready` signal (passive side announces it's listening; the initiator resends its cached offer
+on receiving it). Verified with 3 unit tests plus a new real two-headless-Chrome check that
+specifically reproduces the staggered-join bug shape (A joins, waits 4s, then B joins) — both
+sides connected, zero reload, zero console errors.
 
 ## Current phase
-PHASE 2 (DEVELOPMENT/PHASE_2_BOTS_AND_VOICE/STATUS.md) IN PROGRESS: 4/5 listed items done
-(bots, mixed rooms, queue names, voice chat — now bugfixed too). Only item 4 (sound packs)
-remains, blocked on the owner's direction (see above). **Phase is not "complete"** — per the
-owner's standing instruction, more features can still be added here.
+PHASE 2 (DEVELOPMENT/PHASE_2_BOTS_AND_VOICE/STATUS.md) IN PROGRESS: bots, mixed rooms, queue
+names, and voice chat (bugfixed) are DONE. Item 4 (sound packs) is now PARTIAL: voice lines
+DONE, animal sounds still waiting on the owner. **Phase is not "complete"** — per the owner's
+standing instruction, more features can still be added here.
 
 ## Next step
-Waiting on the owner to answer: TTS-only for voice lines (I can build this immediately, no
-files needed), or also want help finding free/CC0 animal-sound files, or something else in
-mind for the "PUBG/BGMI feel"? Once decided, I can implement right away — no other blockers.
+Waiting on the owner to: (1) try the new voice lines and voice-chat fix and confirm they work
+well, (2) pick a few animal-sound clips from Pixabay (dog bark, cat meow, or whatever else they
+want) and send the files over — I'll wire them in as soon as they arrive. No other blockers;
+happy to also just keep going on any other Phase 2 idea the owner has in mind.

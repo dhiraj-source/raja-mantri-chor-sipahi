@@ -6,11 +6,15 @@ import { I18nProvider } from '../src/i18n/I18nProvider';
 import {
   SOUNDS,
   SoundPlayer,
+  VOICE_LINES,
+  VoiceLinePlayer,
   loadMuted,
   saveMuted,
   soundForReaction,
   type AudioContextLike,
   type SoundName,
+  type SpeechSynthesisLike,
+  type SpeechUtteranceLike,
   type StorageLike,
 } from '../src/audio/sounds';
 
@@ -155,6 +159,46 @@ describe('SoundPlayer', () => {
     player.unlock();
     player.play('WRONG');
     expect(ctx.resumed).toBe(2);
+  });
+});
+
+describe('VoiceLinePlayer', () => {
+  function fakeSynth() {
+    const spoken: SpeechUtteranceLike[] = [];
+    const synth: SpeechSynthesisLike = { speak: (u) => spoken.push(u) };
+    return { synth, spoken };
+  }
+  const makeUtterance = (text: string): SpeechUtteranceLike => ({ text, rate: 1, pitch: 1, volume: 1 });
+
+  it('sirf un naamon ke liye bolta hai jinki voice line hai', () => {
+    const { synth, spoken } = fakeSynth();
+    const voice = new VoiceLinePlayer(() => synth, makeUtterance, () => false);
+    expect(voice.speak('CORRECT')).toBe(true);
+    expect(spoken).toHaveLength(1);
+    expect(spoken[0]?.text).toBe(VOICE_LINES.CORRECT);
+    expect(voice.speak('😂')).toBe(false); // reaction emoji ki koi voice line nahi
+    expect(spoken).toHaveLength(1);
+  });
+
+  it('muted ho to nahi bolta, synth ko chhuta bhi nahi', () => {
+    let calledSynth = false;
+    const getSynth = () => {
+      calledSynth = true;
+      return fakeSynth().synth;
+    };
+    const voice = new VoiceLinePlayer(getSynth, makeUtterance, () => true);
+    expect(voice.speak('WIN')).toBe(false);
+    expect(calledSynth).toBe(false);
+  });
+
+  it('TTS available nahi (null synth) ya error par crash nahi', () => {
+    expect(new VoiceLinePlayer(() => null, makeUtterance, () => false).speak('WIN')).toBe(false);
+    const throwing = new VoiceLinePlayer(
+      () => { throw new Error('no speech'); },
+      makeUtterance,
+      () => false,
+    );
+    expect(throwing.speak('WIN')).toBe(false);
   });
 });
 

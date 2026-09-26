@@ -787,3 +787,38 @@ None (the fix is entirely inside the existing opaque `VOICE_SIGNAL` payload — 
 - This does not add a general retry/heartbeat for connections that fail for other reasons (e.g. a mid-call network blip) — see RMC-0020's known limitations, still true.
 - Sound packs (item 4) still not implemented — waiting on the owner's own audio files. Phase 2 stays open, not "complete".
 
+# RMC-0022
+
+## Feature
+Phase 2, item 4 (part 1 of 2): PUBG/BGMI-style spoken voice lines via text-to-speech
+
+## Status
+COMPLETE for voice lines. Animal sounds (the other half of item 4) still not implemented — see Known limitations.
+
+## What changed
+- Owner tried to download real PUBG/BGMI character voice-line MP3s and correctly concluded they can't be legally used (copyrighted). Asked me to find something similar that's free.
+- Decision (owner confirmed): browser-native text-to-speech for voice lines (zero audio files, zero copyright risk, original wording inspired by the genre's energetic announcer style — not copied from any trademarked line), plus a separate search for free/CC0 animal-sound files for the other half of item 4.
+- apps/web/src/audio/sounds.ts: `VOICE_LINES` (a `SoundName` -> short phrase map: `CORRECT: 'Busted!'`, `WRONG: 'Escaped!'`, `WIN: 'Victory!'`), `VoiceLinePlayer` class (same dependency-injected shape as the existing `SoundPlayer`, using `SpeechSynthesisLike`/`SpeechUtteranceLike` interfaces so it's unit-testable without a real browser). Deliberately only on round-result/win moments, not on every reaction emoji tap (would get repetitive fast).
+- apps/web/src/audio/useSounds.ts: `play(name)` now also calls the voice-line player (same mute toggle controls both — no new UI, no new setting).
+- Researched (WebSearch + WebFetch, not guessed) a free, safe source for animal sounds: Pixabay's sound-effects library. Confirmed its actual Content License: commercial use allowed, no attribution required, no signup needed to download MP3s; the only restriction relevant here is not reselling a sound file unchanged as a standalone product, which doesn't apply to using one inside the game. Kenney.nl's "Animal Pack" (which looked promising by name) turned out to be visual sprites, not audio — ruled out after checking, not assumed. Nothing downloaded or wired in yet — waiting on the owner to pick specific clips.
+
+## Reason
+Owner's Phase 2 item 4, unblocked for its voice-line half; a real, legally-clean substitute for copyrighted PUBG/BGMI audio.
+
+## Database
+None.
+
+## API
+None.
+
+## WebSocket
+None.
+
+## Tests
+- web 108 (+3: `VoiceLinePlayer` speaks only for names with a line, stays silent (and never touches the synth) when muted, never crashes with no TTS support or a throwing synth) = 277 total (37 engine + 132 api + 108 web). Build + lint clean.
+
+## Known limitations
+- Voice lines are English-only text (matches how PUBG Mobile itself plays English announcer audio regardless of the player's UI language); not localized per app language.
+- Animal sounds (the other half of item 4) are still not implemented — a free source (Pixabay) has been verified safe to use, but no specific clips have been chosen/downloaded yet. Phase 2 stays open, not "complete".
+- Speech-synthesis voice/accent is whatever the browser/OS provides by default (not chosen or bundled) — quality varies by device.
+

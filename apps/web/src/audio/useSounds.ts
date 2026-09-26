@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   SoundPlayer,
+  VoiceLinePlayer,
   loadMuted,
   saveMuted,
   type AudioContextLike,
   type SoundName,
+  type SpeechSynthesisLike,
+  type SpeechUtteranceLike,
   type StorageLike,
 } from './sounds';
 
@@ -25,6 +28,14 @@ function createBrowserContext(): AudioContextLike | null {
   return Ctor ? new Ctor() : null;
 }
 
+function browserSynth(): SpeechSynthesisLike | null {
+  return typeof window === 'undefined' || !window.speechSynthesis ? null : window.speechSynthesis;
+}
+
+function createBrowserUtterance(text: string): SpeechUtteranceLike {
+  return new SpeechSynthesisUtterance(text);
+}
+
 /** Sounds + mute button ki state. Mute choice localStorage me yaad rehti hai. */
 export function useSounds() {
   const [muted, setMuted] = useState(() => loadMuted(browserStorage()));
@@ -32,6 +43,10 @@ export function useSounds() {
   mutedRef.current = muted;
 
   const player = useMemo(() => new SoundPlayer(createBrowserContext, () => mutedRef.current), []);
+  const voice = useMemo(
+    () => new VoiceLinePlayer(browserSynth, createBrowserUtterance, () => mutedRef.current),
+    [],
+  );
 
   // Browser pehle click ke baad hi audio chalne deta hai.
   useEffect(() => {
@@ -40,7 +55,13 @@ export function useSounds() {
     return () => window.removeEventListener('pointerdown', unlock);
   }, [player]);
 
-  const play = useCallback((name: SoundName) => void player.play(name), [player]);
+  const play = useCallback(
+    (name: SoundName) => {
+      player.play(name);
+      voice.speak(name);
+    },
+    [player, voice],
+  );
 
   const toggleMuted = useCallback(() => {
     setMuted((current) => {

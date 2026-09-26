@@ -33,6 +33,7 @@ See `DEVELOPMENT/` for the phase-tracking convention.
 - RMC-0019 **Phase 2 kickoff**: Quick play with bots (solo player), host can fill/empty room seats with bots, quick-match queue shows waiting players' names. See DEVELOPMENT/PHASE_2_BOTS_AND_VOICE/STATUS.md.
 - RMC-0020 **Live voice chat**: WebRTC mesh (public STUN only), join/mute/unmute, per-peer connection status; bots never appear in the voice list. Verified with unit tests, the real-server smoke test, and two real headless-Chrome browsers completing genuine ICE/DTLS negotiation. See DEVELOPMENT/PHASE_2_BOTS_AND_VOICE/STATUS.md.
 - RMC-0021 **Voice chat bugfix**: fixed a real "need to reload to connect" bug (owner-reported) caused by joining voice chat at different times — the earlier joiner's offer could be sent before the later joiner was listening and was never retried. Verified with a staggered-join headless-Chrome test that reproduces the exact reported scenario.
+- RMC-0022 **PUBG/BGMI-style voice lines (item 4, part 1/2)**: spoken announcer-style lines ("Busted!", "Escaped!", "Victory!") via the browser's built-in text-to-speech on round-result/win moments — zero audio files, zero copyright risk. Animal sounds (part 2/2) not yet implemented; verified a free/CC0-safe source (Pixabay) for when the owner picks specific clips.
 
 ## In Progress
 - Kuch nahi.
@@ -51,7 +52,7 @@ Database: PostgreSQL 16 (Docker) via pg — accounts, game_history; migrations i
 Run locally (3 terminals, folder D:\ANJALI\GAME): `npm run db:up` (once, Docker Desktop must be running), `npm run dev:api`, `npm run dev:web` -> http://localhost:5173 (open two tabs = two players, or one tab + "Play with bots" for solo). Full UI check: `npm run ui:check` (with the API and web dev server running). Phone on the same WiFi: open http://<PC-IP>:5173 (RMC-0016); allow ports 5173 and 3000 in Windows Firewall (Private networks).
 Realtime: WebSocket (path /ws)
 Temporary state: in API memory (Redis 7 in Docker, NOT used yet)
-Tests: Vitest (engine 37, api 132 incl. real-PostgreSQL, cors and bot tests, web 105 incl. voice tests = 274).
+Tests: Vitest (engine 37, api 132 incl. real-PostgreSQL, cors and bot tests, web 108 incl. voice and voice-line tests = 277).
 Deployment: LIVE at https://raja-mantri-chor-sipahi-five.vercel.app (web, Vercel) + https://rmc-api-etep.onrender.com (API, Render). apps/api/Dockerfile + render.yaml (reference) + vercel.json + .github/workflows/ci.yml — see DEPLOYMENT.md. Local smoke test: run the API with `RECONNECT_GRACE_MS=1500 VOTE_DURATION_MS=1500`, then `npm run smoke -w @rmc/api`.
 Lint: ESLint 9 + typescript-eslint
 
@@ -83,4 +84,4 @@ None known. UI was checked in a real headless Chrome (390px phone + desktop); vo
 - (was: no commit yet — fixed, see Pending above for the push/deploy steps still left)
 
 ## Last Change
-RMC-0021 — Voice chat bugfix: staggered joins no longer need a page reload to connect (Phase 2)
+RMC-0022 — PUBG/BGMI-style spoken voice lines via text-to-speech (Phase 2, item 4 part 1/2)
