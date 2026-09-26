@@ -669,3 +669,44 @@ Live at wss://rmc-api-etep.onrender.com/ws.
 - Redis is provisioned but still unused by application code (same pending item as RMC-0012/0017).
 - No custom domain; Vercel's own `.vercel.app` and Render's own `.onrender.com` subdomains are in use.
 - The `dhirajsources-projects` Vercel scope and `My Workspace` Render workspace now each hold this one project; no team/environment separation (staging vs production) set up yet.
+
+# RMC-0019
+
+## Feature
+Phase 2 kickoff: Quick play with bots, mixed human+bot rooms, quick-match queue shows names
+
+## Status
+COMPLETE for these 3 items (see DEVELOPMENT/PHASE_2_BOTS_AND_VOICE/STATUS.md — phase itself stays IN PROGRESS, more features to come: sound packs waiting on owner-supplied audio files, live WebRTC voice chat not started).
+
+## What changed
+- shared-types: `RoomPlayerView.isBot`, `ServerMessage.QUEUE_STATE` now carries `names: string[]` (not just size), new `ClientMessage`s `PLAY_WITH_BOTS`, `ADD_BOT`, `REMOVE_BOT`, new error code `BOT_NOT_FOUND`.
+- game-engine: no changes — bots are just PlayerId strings to the engine, by design.
+- api/rooms/rooms.service.ts: bot bookkeeping (`bots: Set<PlayerId>`, friendly random bot names, `ROBOT` avatar), `addBot`/`removeBot` (host only, LOBBY only, room not full), `playWithBots` (create room + fill to 4 + start, one call), `getBotMantriTask` (peeks the real roles server-side to find a bot Mantri + valid guess candidates), `onRoundStarted` hook, room auto-cleanup when only bots remain after a human leaves, host never becomes a bot.
+- api/rooms/rooms.gateway.ts: `PLAY_WITH_BOTS`/`ADD_BOT`/`REMOVE_BOT` handlers; schedules a bot's Mantri guess after `BOT_GUESS_DELAY_MS` (default 1800ms, random Sipahi/Chor choice) whenever a round starts with a bot as Mantri.
+- api/rooms/matchmaking.service.ts: `waitingNames()`; gateway's queue broadcast now includes names.
+- web: Home gets a "🤖 Play with bots" button; Lobby shows a BOT tag per bot player and lets the host add an empty seat's bot or remove an existing one; QueueScreen shows who else is waiting; English + Hindi text.
+- Also this session: set up `DEVELOPMENT/` phase-tracking folder (PHASE_1 archived as COMPLETE, PHASE_2 STATUS.md tracks this backlog), small CLAUDE.md addendum pointing at it.
+
+## Reason
+Owner's Phase 2 request: solo play via bots, mixed rooms, and see who's in the matchmaking queue.
+
+## Database
+None.
+
+## API
+See "What changed" for the new WebSocket messages; no HTTP changes.
+
+## WebSocket
+New client->server: `PLAY_WITH_BOTS`, `ADD_BOT`, `REMOVE_BOT`. `QUEUE_STATE` payload shape changed (added `names`).
+
+## Tests
+- engine 37 (unchanged) + api 132 (+10 new bot tests, +1 matchmaking-names test) + web 84 (+7 new bot-UI tests, +1 Home test updated) = 253 pass. Lint + build clean.
+- Real bug caught and fixed by the new tests before it ever reached a real game: `addBot` never registered the bot in the internal `roomOfPlayer` lookup, so `submitGuess` on a bot's behalf failed with "not in a room" — a bot-as-Mantri round would have hung forever. Fixed in the same pass.
+- Real-server smoke test (scripts/smoke-ws.mjs) extended and run end to end: solo player vs 3 bots plays a full 4-round game with zero human guesses (bot Mantri auto-guesses every time it's its turn); a host creates a room, adds 3 bots, removes one, re-adds one, and plays a full mixed human+bot game; quick-match queue reports players' names, not just a count. Two genuine race conditions in the *smoke script itself* (not app code) were found and fixed while verifying: it checked round state before waiting for the new round's data to arrive, and it forgot to send NEXT_ROUND after the final round (so the game never reached GAME_RESULT).
+- Smoke-test accounts cleaned from the dev database afterward.
+
+## Known limitations
+- Bot difficulty is a single fixed behavior (uniform random guess); no easy/hard levels.
+- A room with a disconnected human host and only bots left still waits out the normal reconnect grace before being cleaned up (bots don't shortcut that).
+- Sound packs (item 4) and live voice chat (item 5) are not implemented — see DEVELOPMENT/PHASE_2_BOTS_AND_VOICE/STATUS.md for their status.
+

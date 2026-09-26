@@ -215,6 +215,8 @@ export interface RoomPlayerView {
   connected: boolean;
   /** Player ka pehna hua character id (guest ke liye DEFAULT). Server login se pata karta hai. */
   character: string;
+  /** true = ye ek bot hai (koi asli insaan connected nahi). */
+  isBot: boolean;
 }
 
 /** Disconnect vote: gayab player ka intezaar (WAIT) ya game cancel (CANCEL). */
@@ -261,6 +263,7 @@ export type RoomErrorCode =
   | 'NOT_FRIENDS'
   | 'FRIEND_OFFLINE'
   | 'FRIEND_BUSY'
+  | 'BOT_NOT_FOUND'
   | 'BAD_MESSAGE'
   | 'GAME_RULE';
 
@@ -277,6 +280,12 @@ export type ClientMessage =
   | { event: 'QUICK_MATCH'; data: { name: string } }
   | { event: 'CANCEL_QUICK_MATCH'; data?: undefined }
   | { event: 'VOTE'; data: { choice: VoteChoice } }
+  /** Akela (ya kam) player: room bana kar baaki seats bots se turant bhar kar game shuru. */
+  | { event: 'PLAY_WITH_BOTS'; data: { name: string } }
+  /** Lobby me khaali seat bot se bharo (sirf host, sirf LOBBY). */
+  | { event: 'ADD_BOT'; data?: undefined }
+  /** Ek bot ko room se hatao (sirf host, sirf LOBBY). */
+  | { event: 'REMOVE_BOT'; data: { botId: PlayerId } }
   /** Dost ko apne room me bulao (login + lobby + dost online). */
   | { event: 'INVITE_FRIEND'; data: { accountId: string } }
   /** Login (HTTP) ke baad socket ko account se jodta hai. null = logout. */
@@ -299,8 +308,8 @@ export type ServerMessage =
   | { event: 'GAME_VIEW'; data: PlayerGameView | null }
   /** Room ke kisi player ki reaction (sirf usi room ko jati hai). */
   | { event: 'REACTION'; data: { playerId: PlayerId; emoji: Reaction } }
-  /** Quick match queue: null = queue me nahi, warna abhi kitne players wait kar rahe hain. */
-  | { event: 'QUEUE_STATE'; data: { size: number } | null }
+  /** Quick match queue: null = queue me nahi, warna abhi kaun-kaun wait kar raha hai. */
+  | { event: 'QUEUE_STATE'; data: { size: number; names: string[] } | null }
   /** Dost ne room me bulaya. Join karne ke liye normal JOIN_ROOM chalta hai (server wahin sab check karta hai). */
   | { event: 'INVITE'; data: { fromName: string; roomCode: string } }
   /** Friends list badli (request, accept, unfriend, ya kisi dost ka online/offline): dobara fetch karo. */

@@ -16,12 +16,24 @@ interface Props {
   onStart: () => void;
   onLeave: () => void;
   onReact: (emoji: Reaction) => void;
+  onAddBot: () => void;
+  onRemoveBot: (botId: PlayerId) => void;
   /** Logged-in player ke dost (guest ke liye undefined => invite section nahi). */
   friends?: FriendInfo[];
   onInvite?: (accountId: string) => void;
 }
 
-export function Lobby({ room, myId, onStart, onLeave, onReact, friends, onInvite }: Props) {
+export function Lobby({
+  room,
+  myId,
+  onStart,
+  onLeave,
+  onReact,
+  onAddBot,
+  onRemoveBot,
+  friends,
+  onInvite,
+}: Props) {
   const { t } = useI18n();
   const isHost = room.hostId === myId;
   const full = room.players.length === MAX_ROOM_PLAYERS;
@@ -53,11 +65,32 @@ export function Lobby({ room, myId, onStart, onLeave, onReact, friends, onInvite
                       {!p.connected && (
                         <span className="text-xs text-red-300"> {t('lobby.disconnected')}</span>
                       )}
+                      {p.isBot && <span className="text-xs text-sky-300"> · {t('lobby.bot')}</span>}
                     </span>
-                    {p.isHost && <span className="text-xs text-amber-300">{t('lobby.host')}</span>}
+                    <span className="flex items-center gap-2">
+                      {p.isHost && <span className="text-xs text-amber-300">{t('lobby.host')}</span>}
+                      {p.isBot && isHost && (
+                        <button
+                          className="rounded-lg bg-white/10 px-2 py-1 text-xs active:scale-95"
+                          onClick={() => onRemoveBot(p.id)}
+                        >
+                          {t('lobby.removeBot')}
+                        </button>
+                      )}
+                    </span>
                   </>
                 ) : (
-                  <span className="text-stone-500">{t('lobby.empty')}</span>
+                  <>
+                    <span className="text-stone-500">{t('lobby.empty')}</span>
+                    {isHost && (
+                      <button
+                        className="rounded-lg bg-white/10 px-3 py-1 text-xs font-semibold active:scale-95"
+                        onClick={onAddBot}
+                      >
+                        {t('lobby.addBot')}
+                      </button>
+                    )}
+                  </>
                 )}
               </li>
             );

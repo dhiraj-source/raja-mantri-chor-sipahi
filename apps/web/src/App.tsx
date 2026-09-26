@@ -114,12 +114,20 @@ export function App() {
         onStart={() => send({ event: 'START_GAME' })}
         onLeave={leave}
         onReact={react}
+        onAddBot={() => send({ event: 'ADD_BOT' })}
+        onRemoveBot={(botId) => send({ event: 'REMOVE_BOT', data: { botId } })}
         friends={authToken ? friends.overview.friends : undefined}
         onInvite={(accountId) => send({ event: 'INVITE_FRIEND', data: { accountId } })}
       />
     );
   } else if (queue) {
-    screen = <QueueScreen size={queue.size} onCancel={() => send({ event: 'CANCEL_QUICK_MATCH' })} />;
+    screen = (
+      <QueueScreen
+        size={queue.size}
+        names={queue.names}
+        onCancel={() => send({ event: 'CANCEL_QUICK_MATCH' })}
+      />
+    );
   } else {
     screen = (
       <div className="space-y-4">
@@ -166,6 +174,7 @@ export function App() {
           onCreate={(name) => send({ event: 'CREATE_ROOM', data: { name } })}
           onJoin={(code, name) => send({ event: 'JOIN_ROOM', data: { code, name } })}
           onQuickMatch={(name) => send({ event: 'QUICK_MATCH', data: { name } })}
+          onPlayWithBots={(name) => send({ event: 'PLAY_WITH_BOTS', data: { name } })}
         />
       </div>
     );

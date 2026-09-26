@@ -50,17 +50,20 @@ const gameProps = {
 
 describe('screens render without crashing', () => {
   it('Home', () => {
-    const html = render(<Home onCreate={noop} onJoin={noop} onQuickMatch={noop} />);
+    const html = render(<Home onCreate={noop} onJoin={noop} onQuickMatch={noop} onPlayWithBots={noop} />);
     expect(html).toContain('Quick match');
+    expect(html).toContain('Play with bots');
     expect(html).toContain('Create a new room');
   });
 
   it('Queue', () => {
-    expect(render(<QueueScreen size={2} onCancel={noop} />)).toContain('2 / 4 players ready');
+    const html = render(<QueueScreen size={2} names={['Asha', 'Bina']} onCancel={noop} />);
+    expect(html).toContain('2 / 4 players ready');
+    expect(html).toContain('Asha, Bina');
   });
 
   it('Lobby shows code, host and disconnected player', () => {
-    const html = render(<Lobby room={room} myId="a" onStart={noop} onLeave={noop} onReact={noop} />);
+    const html = render(<Lobby room={room} myId="a" onStart={noop} onLeave={noop} onReact={noop} onAddBot={noop} onRemoveBot={noop} />);
     expect(html).toContain('ABCD');
     expect(html).toContain('HOST');
     expect(html).toContain('disconnected');

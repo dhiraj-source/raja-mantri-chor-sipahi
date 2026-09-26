@@ -114,7 +114,7 @@ describe('avatars', () => {
       vote: null,
       status: 'LOBBY',
     };
-    const html = render(<Lobby room={room} myId="a" onStart={noop} onLeave={noop} onReact={noop} />);
+    const html = render(<Lobby room={room} myId="a" onStart={noop} onLeave={noop} onReact={noop} onAddBot={noop} onRemoveBot={noop} />);
     expect(html).toContain('🦁');
     expect(html).toContain('🙂');
   });

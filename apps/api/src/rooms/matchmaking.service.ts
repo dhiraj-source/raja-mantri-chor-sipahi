@@ -57,4 +57,9 @@ export class MatchmakingService {
   waiting(): PlayerId[] {
     return this.queue.map((q) => q.playerId);
   }
+
+  /** Queue me abhi wait kar rahe players ke naam, join order me. */
+  waitingNames(): string[] {
+    return this.queue.map((q) => q.name);
+  }
 }

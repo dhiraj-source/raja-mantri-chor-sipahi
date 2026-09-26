@@ -1,28 +1,55 @@
 # LAST WORK
 
-## Latest (RMC-0018 — deployed live)
-Owner said "i connect the railway with my github, can't you do that" — took that as a green light to drive the whole deployment via CLI instead of asking them to click through dashboards.
+## Latest (RMC-0019 — Phase 2 kickoff: bots)
+Owner started Phase 2 with 5 asks: (1) quick play with bots, (2) mixed human+bot rooms with
+queue names shown, (3) sound/voice packs, (4) live voice chat. First set up
+`DEVELOPMENT/PHASE_1_FOUNDATION_TO_LAUNCH/STATUS.md` (archived, COMPLETE) and
+`DEVELOPMENT/PHASE_2_BOTS_AND_VOICE/STATUS.md` (new, IN PROGRESS, full checklist) per the
+owner's explicit ask for a phase-tracking folder structure. Root CLAUDE.md/PROJECT_STATUS.md
+point at these now; the 5-file read-before-work contract is unchanged.
 
-- Found and used the Railway CLI (`npx @railway/cli`), logged in via its browser OAuth flow (owner completed it) — but `railway init` failed: **their free trial had expired**, needs a paid plan. This is a real billing decision, so I stopped and asked; owner chose **Render** (free tier) over Railway (pay) or Fly.io.
-- Checked Render's actual current free-tier terms via web search/fetch before committing to it (important: free Postgres auto-deletes 30+14 days after creation — documented clearly for the owner).
-- Installed Render CLI via `winget`, logged in via its browser device-code flow (owner completed it). Created via CLI: `rmc-postgres` (free Postgres), `rmc-redis` (free Key Value), `rmc-api` (Docker web service from the GitHub repo).
-- Hit two real bugs and fixed them: Git Bash mangled a bare `/health` CLI argument into a Windows path; and the CLI has no flag to set the Dockerfile path independently from the build root, which would have broken the monorepo build — worked around by calling Render's REST API directly (using the CLI's own stored token) to PATCH `serviceDetails.envSpecificDetails` correctly, then triggering a deploy (PATCH alone doesn't redeploy).
-- Installed Vercel CLI via npx, logged in (owner completed browser auth), `vercel link` (auto-connected GitHub too), set `VITE_API_URL`/`VITE_WS_URL` to the Render URL, `vercel --prod` to deploy.
-- Wired CORS_ORIGINS on Render to the real Vercel URL once known, redeployed.
-- Verified for real: `/health` 200 + correct CORS on the live Render URL; full 4-round game smoke-tested over the live `wss://` URL; **opened the actual production web URL in headless Chrome** — connects cleanly, zero console errors, screenshot taken.
-- Cleaned up all locally-extracted secrets (API keys, DB connection strings were in a temp folder outside the repo, deleted after use; nothing went into git).
-- Removed the now-unused railway.json, added render.yaml (documentation/reference — resources were made via CLI, not by syncing this file), rewrote DEPLOYMENT.md for what's actually live.
+Asked the owner 2 real decisions before touching the ambiguous items:
+- Sound packs (real PUBG-style voice-lines are copyrighted) -> **owner will supply their own
+  audio files** (not provided yet — this item is WAITING, not started).
+- Live voice chat architecture -> **WebRTC mesh, public STUN only** (free, simplest; not
+  started yet, it's a big feature on its own).
 
-## LIVE URLs
-- Web: https://raja-mantri-chor-sipahi-five.vercel.app
-- API: https://rmc-api-etep.onrender.com
-- GitHub: https://github.com/dhiraj-source/raja-mantri-chor-sipahi (main; Vercel + Render both auto-deploy on push)
+Then implemented items 1-3 (bots + mixed rooms + queue names) fully:
+- shared-types: `RoomPlayerView.isBot`, `QUEUE_STATE` now carries names, `PLAY_WITH_BOTS` /
+  `ADD_BOT` / `REMOVE_BOT` messages, `BOT_NOT_FOUND` error.
+- RoomsService: bot creation/removal (host only, lobby only), `playWithBots` (one-shot solo
+  flow), `getBotMantriTask` (server peeks real roles to find a bot Mantri + valid guesses),
+  auto room cleanup when only bots remain, host never becomes a bot.
+- RoomsGateway: new message handlers + a scheduled bot auto-guess (`BOT_GUESS_DELAY_MS`,
+  default 1800ms) whenever a round starts with a bot as Mantri.
+- MatchmakingService: `waitingNames()`.
+- web: "Play with bots" button on Home, BOT tag + add/remove buttons in Lobby, names shown
+  in the queue screen, English + Hindi text.
 
-## Important: owner must act by ~2026-10-26
-Render's free PostgreSQL expires 30 days after creation (created 2026-09-26). See DEPLOYMENT.md for the options (upgrade / recreate / migrate).
+**Real bug caught by testing, not guessed at:** `addBot` initially forgot to register the bot
+in the internal `roomOfPlayer` lookup — a bot becoming Mantri would have made `submitGuess`
+throw "not in a room" and hung that round forever. The new unit test for
+`getBotMantriTask`/`submitGuess` caught it immediately; fixed by also setting
+`roomOfPlayer` (and clearing it) wherever bots are added/removed/forgotten.
+
+**Verified for real, not just written:**
+- 253 unit tests pass (37 engine + 132 api [+10 bot tests, +1 matchmaking] + 84 web
+  [+7 bot-UI tests]). Lint + build clean.
+- Extended `scripts/smoke-ws.mjs` and ran it against a real running server: solo player vs
+  3 bots plays a full 4-round game with the bot Mantri auto-guessing every time (zero human
+  guesses needed); a host builds a mixed room (add 3 bots, remove one, re-add one, play a
+  full game); queue reports names not just a count. Found and fixed two race conditions in
+  the *smoke script itself* while doing this (checking round state before the new round's
+  data arrived; forgetting to send NEXT_ROUND after the final round). Cleaned up the
+  smoke-test accounts from the dev database afterward.
 
 ## Current phase
-Every long-term feature in CLAUDE.md is implemented AND the game is live. Remaining backlog is polish/infra, not features: Redis actually wired into rooms/sessions (still just provisioned), accessibility review, real-phone check, visual check of vote/friends/invite screens, and the looming free-Postgres-expiry decision above.
+PHASE 2 (DEVELOPMENT/PHASE_2_BOTS_AND_VOICE/STATUS.md) IN PROGRESS: 3/5 listed items done.
+Remaining: sound packs (waiting on owner's audio files) and live voice chat (not started,
+scoped as WebRTC mesh + STUN).
 
 ## Next step
-Whatever the owner wants next — could be: decide the Postgres plan before it expires, real-phone testing on the live URL, or a new feature. Nothing is blocking; ask the owner.
+Ask the owner: send the audio files for sound packs (and what folder/naming convention
+they'd like, or let me propose one), and/or say when to start on the WebRTC voice chat
+feature (it's a substantial standalone piece: signaling over the existing WebSocket gateway,
+RTCPeerConnection management in the browser, mute/unmute UI, per-room mesh for up to 4 peers).

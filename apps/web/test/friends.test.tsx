@@ -89,7 +89,7 @@ describe('Lobby invite section', () => {
     status: 'LOBBY',
   };
   const lobby = (friends?: Parameters<typeof Lobby>[0]['friends']) =>
-    render(<Lobby room={room} myId="a" onStart={noop} onLeave={noop} onReact={noop} friends={friends} onInvite={noop} />);
+    render(<Lobby room={room} myId="a" onStart={noop} onLeave={noop} onReact={noop} onAddBot={noop} onRemoveBot={noop} friends={friends} onInvite={noop} />);
 
   it('sirf online dost invite list me', () => {
     const html = lobby(overview.friends);

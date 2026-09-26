@@ -19,9 +19,10 @@ interface Props {
   onCreate: (name: string) => void;
   onJoin: (code: string, name: string) => void;
   onQuickMatch: (name: string) => void;
+  onPlayWithBots: (name: string) => void;
 }
 
-export function Home({ defaultName, onCreate, onJoin, onQuickMatch }: Props) {
+export function Home({ defaultName, onCreate, onJoin, onQuickMatch, onPlayWithBots }: Props) {
   const { t } = useI18n();
   const [typedName, setName] = useState(loadName);
   const name = typedName || defaultName || '';
@@ -54,6 +55,14 @@ export function Home({ defaultName, onCreate, onJoin, onQuickMatch }: Props) {
 
       <Button className="w-full" disabled={!nameOk} onClick={run(() => onQuickMatch(cleanName))}>
         ⚡ {t('home.quick')}
+      </Button>
+      <Button
+        variant="ghost"
+        className="w-full"
+        disabled={!nameOk}
+        onClick={run(() => onPlayWithBots(cleanName))}
+      >
+        🤖 {t('home.bots')}
       </Button>
       <Button variant="ghost" className="w-full" disabled={!nameOk} onClick={run(() => onCreate(cleanName))}>
         {t('home.create')}

@@ -32,6 +32,8 @@ const VOTE_DURATION_MS = Number(process.env.VOTE_DURATION_MS ?? 30_000);
 const MAX_MESSAGES_PER_SECOND = Number(process.env.MAX_MESSAGES_PER_SECOND ?? 20);
 /** Ek message ka max size (bytes). Isse bada frame aaye to ws connection band kar deta hai. */
 const MAX_PAYLOAD_BYTES = 4096;
+/** Bot Mantri ka guess itni der (ms) me aata hai — insaan jaisa lagne ke liye thoda ruk kar. */
+const BOT_GUESS_DELAY_MS = Number(process.env.BOT_GUESS_DELAY_MS ?? 1800);
 
 /** Har socket ek guest player hai. Reconnect: ?token=<secret> se purana player wapas milta hai. */
 @WebSocketGateway({ path: '/ws', maxPayload: MAX_PAYLOAD_BYTES })
@@ -40,6 +42,9 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
   private readonly playerOfSocket = new WeakMap<WebSocket, PlayerId>();
   private readonly graceTimers = new Map<PlayerId, NodeJS.Timeout>();
   private readonly voteTimers = new Map<string, NodeJS.Timeout>();
+  private readonly botGuessTimers = new Map<string, NodeJS.Timeout>();
+  /** Tests me fixed/chhota delay dene ke liye. */
+  botGuessDelayMs = BOT_GUESS_DELAY_MS;
   private readonly limiter = new RateLimiter(MAX_MESSAGES_PER_SECOND, 1000);
   /** Ek player 2 second me ek hi invite bhej sakta hai. */
   private readonly inviteLimiter = new RateLimiter(1, 2000);
@@ -54,6 +59,7 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     private readonly friends: FriendsService,
   ) {
     this.rooms.onGameFinished = (game) => void this.rewardPlayers(game);
+    this.rooms.onRoundStarted = (code) => this.maybeScheduleBotGuess(code);
     this.accounts.onCharacterChanged = (accountId, characterId) => {
       for (const playerId of this.sessions.playersOf(accountId)) {
         this.rooms.setCharacter(playerId, characterId);
@@ -189,9 +195,16 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
   }
 
   onModuleDestroy(): void {
-    for (const timer of [...this.graceTimers.values(), ...this.voteTimers.values()]) clearTimeout(timer);
+    for (const timer of [
+      ...this.graceTimers.values(),
+      ...this.voteTimers.values(),
+      ...this.botGuessTimers.values(),
+    ]) {
+      clearTimeout(timer);
+    }
     this.graceTimers.clear();
     this.voteTimers.clear();
+    this.botGuessTimers.clear();
   }
 
   handleConnection(socket: WebSocket, request?: IncomingMessage): void {
@@ -334,6 +347,46 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     });
   }
 
+  /** Akela (ya kam) player: room bana kar baaki seats bots se turant bhar kar game shuru. */
+  @SubscribeMessage('PLAY_WITH_BOTS')
+  playWithBots(@ConnectedSocket() socket: WebSocket, @MessageBody() body: { name?: string }): void {
+    this.handle(socket, (id) => {
+      const code = this.rooms.playWithBots(id, body?.name as string);
+      this.dropFromQueue(id);
+      return code;
+    });
+  }
+
+  @SubscribeMessage('ADD_BOT')
+  addBot(@ConnectedSocket() socket: WebSocket): void {
+    this.handle(socket, (id) => this.rooms.addBot(id).code);
+  }
+
+  @SubscribeMessage('REMOVE_BOT')
+  removeBot(@ConnectedSocket() socket: WebSocket, @MessageBody() body: { botId?: string }): void {
+    this.handle(socket, (id) => this.rooms.removeBot(id, body?.botId as string));
+  }
+
+  /** ROUND_ACTIVE ka Mantri bot ho to uska guess thodi der baad khud kar do. */
+  private maybeScheduleBotGuess(code: string): void {
+    const old = this.botGuessTimers.get(code);
+    if (old) clearTimeout(old);
+    this.botGuessTimers.set(
+      code,
+      setTimeout(() => {
+        this.botGuessTimers.delete(code);
+        const task = this.rooms.getBotMantriTask(code); // dobara check: tab tak state badal gayi ho sakti hai
+        if (!task || task.options.length === 0) return;
+        const guess = task.options[Math.floor(Math.random() * task.options.length)] as string;
+        try {
+          this.broadcastRoom(this.rooms.submitGuess(task.mantriId, guess));
+        } catch (e) {
+          this.reportError(task.mantriId, e);
+        }
+      }, this.botGuessDelayMs),
+    );
+  }
+
   /** Queue se hatao aur (agar tha to) is player ko + baaki wait karne walon ko batao. */
   private dropFromQueue(playerId: PlayerId): void {
     if (!this.matchmaking.leave(playerId)) return;
@@ -343,7 +396,8 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
 
   private notifyQueue(): void {
     const waiting = this.matchmaking.waiting();
-    for (const id of waiting) this.send(id, { event: 'QUEUE_STATE', data: { size: waiting.length } });
+    const names = this.matchmaking.waitingNames();
+    for (const id of waiting) this.send(id, { event: 'QUEUE_STATE', data: { size: waiting.length, names } });
   }
 
   private bind(socket: WebSocket, playerId: PlayerId): void {

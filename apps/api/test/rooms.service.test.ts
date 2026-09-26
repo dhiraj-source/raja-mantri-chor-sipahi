@@ -50,7 +50,7 @@ describe('create / join', () => {
     const room = s.getRoomView(code);
     expect(room?.hostId).toBe('a');
     expect(room?.players).toEqual([
-      { id: 'a', name: 'Asha', isHost: true, connected: true, character: 'DEFAULT' },
+      { id: 'a', name: 'Asha', isHost: true, connected: true, character: 'DEFAULT', isBot: false },
     ]);
     expect(room?.status).toBe('LOBBY');
   });
@@ -223,6 +223,126 @@ describe('avatars (characters)', () => {
     s.leaveRoom('d');
     s.joinRoom('d', code, 'Dev');
     expect(s.getRoomView(code)?.players.find((p) => p.id === 'd')?.character).toBe('OWL');
+  });
+});
+
+describe('bots', () => {
+  it('addBot: khaali seat bhar deta hai, naam+avatar milta hai, isBot true dikhta hai', () => {
+    const s = newService();
+    const code = s.createRoom('a', 'Asha');
+    const { bot } = s.addBot('a');
+    expect(bot.name).toMatch(/^Bot /);
+    const view = s.getRoomView(code);
+    expect(view?.players).toHaveLength(2);
+    const botView = view?.players.find((p) => p.id === bot.id);
+    expect(botView).toMatchObject({ isBot: true, character: 'ROBOT', isHost: false });
+    expect(s.isBot(bot.id)).toBe(true);
+    expect(s.isBot('a')).toBe(false);
+  });
+
+  it('sirf host bot add/remove kar sakta hai, sirf LOBBY me, room full na ho', () => {
+    const s = newService();
+    const code = s.createRoom('a', 'Asha');
+    s.joinRoom('b', code, 'Bina');
+    expectCode(() => s.addBot('b'), 'NOT_HOST');
+    const { bot: bot1 } = s.addBot('a');
+    s.addBot('a');
+    expectCode(() => s.addBot('a'), 'ROOM_FULL'); // ab 4/4
+    expectCode(() => s.removeBot('b', bot1.id), 'NOT_HOST');
+    expectCode(() => s.removeBot('a', 'not-a-bot'), 'BOT_NOT_FOUND');
+    s.removeBot('a', bot1.id);
+    expect(s.getRoomView(code)?.players).toHaveLength(3);
+    expect(s.isBot(bot1.id)).toBe(false); // bhula diya gaya
+  });
+
+  it('do bots ka naam takrata nahi', () => {
+    const s = newService();
+    s.createRoom('a', 'Asha');
+    const one = s.addBot('a').bot.name;
+    const two = s.addBot('a').bot.name;
+    const three = s.addBot('a').bot.name;
+    expect(new Set([one, two, three]).size).toBe(3);
+  });
+
+  it('game shuru hone ke baad bot add/remove nahi', () => {
+    const s = newService();
+    const code = fullRoom(s);
+    s.startGame('a');
+    expectCode(() => s.addBot('a'), 'GAME_IN_PROGRESS');
+    void code;
+  });
+
+  it('playWithBots: solo player, poora room bots se bharta hai, game turant shuru', () => {
+    const s = newService();
+    const code = s.playWithBots('a', 'Asha');
+    const view = s.getRoomView(code);
+    expect(view?.status).toBe('IN_GAME');
+    expect(view?.players).toHaveLength(4);
+    expect(view?.players.filter((p) => p.isBot)).toHaveLength(3);
+    expect(view?.players.find((p) => p.id === 'a')?.isHost).toBe(true);
+    expect(s.getGameViewFor('a')?.phase).toBe('ROUND_ACTIVE');
+  });
+
+  it('getBotMantriTask: bot Mantri ho to mantriId + 2 options deta hai, warna null', () => {
+    const s = newService();
+    const code = s.playWithBots('a', 'Asha');
+    for (let round = 1; round <= 4; round++) {
+      const view = s.getGameViewFor('a') as PlayerGameView;
+      const task = s.getBotMantriTask(code);
+      if (view.myRole === 'MANTRI') {
+        expect(task).toBeNull(); // insaan khud Mantri hai
+        // Khatam karo taaki loop aage badh sake.
+        const raja = Object.entries(view.visibleRoles).find(([, r]) => r === 'RAJA')?.[0];
+        const target = view.players.find((p) => p.id !== raja && p.id !== 'a') as { id: string };
+        s.submitGuess('a', target.id);
+      } else {
+        expect(task?.mantriId).not.toBe('a');
+        expect(task?.options).toHaveLength(2);
+        expect(s.isBot(task?.mantriId as string)).toBe(true);
+        s.submitGuess(task?.mantriId as string, task?.options[0] as string);
+      }
+      expect(s.getGameViewFor('a')?.phase).toBe('ROUND_RESULT');
+      if (round < 4) s.nextRound('a');
+    }
+  });
+
+  it('bina game ke ya round result me getBotMantriTask null', () => {
+    const s = newService();
+    const code = s.createRoom('a', 'Asha');
+    expect(s.getBotMantriTask(code)).toBeNull();
+    expect(s.getBotMantriTask('ZZZZ')).toBeNull();
+  });
+
+  it('insaan chala jaye aur sirf bots bachein: room khud saaf ho jata hai', () => {
+    const s = newService();
+    const code = s.playWithBots('a', 'Asha');
+    const botIds = s.getRoomView(code)?.players.filter((p) => p.isBot).map((p) => p.id) as string[];
+    s.leaveRoom('a');
+    expect(s.getRoomView(code)).toBeNull();
+    for (const id of botIds) expect(s.isBot(id)).toBe(false); // saare bots bhula diye gaye
+  });
+
+  it('host chala jaye (baaki insaan bache) to naya host bot nahi banta', () => {
+    const s = newService();
+    const code = s.createRoom('a', 'Asha');
+    s.joinRoom('b', code, 'Bina');
+    const { bot } = s.addBot('a');
+    void bot;
+    s.leaveRoom('a'); // host chala gaya; bachi hui: b (insaan), bot
+    expect(s.getRoomView(code)?.hostId).toBe('b');
+  });
+});
+
+describe('quick match queue names', () => {
+  it('MatchmakingService.waitingNames join order me naam deta hai', async () => {
+    const { MatchmakingService } = await import('../src/rooms/matchmaking.service');
+    const s = newService();
+    const mm = new MatchmakingService(s);
+    mm.join('a', 'Asha');
+    mm.join('b', 'Bina');
+    expect(mm.waitingNames()).toEqual(['Asha', 'Bina']);
+    mm.leave('a');
+    expect(mm.waitingNames()).toEqual(['Bina']);
   });
 });
 

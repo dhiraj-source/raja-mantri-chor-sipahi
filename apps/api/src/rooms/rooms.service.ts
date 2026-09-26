@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import {
   GameEngineError,
@@ -25,11 +26,19 @@ import {
   type PlayerId,
   type PlayerInfo,
   type Reaction,
+  type Role,
   type RoomErrorCode,
   type RoundResult,
   type RoomView,
   type VoteChoice,
 } from '@rmc/shared-types';
+
+/** Bots ke liye friendly naam. Room me takraav ho to aage number lag jata hai. */
+const BOT_NAMES = [
+  'Aryan', 'Meera', 'Rohan', 'Diya', 'Kabir', 'Isha', 'Vikram', 'Neha', 'Arjun', 'Priya',
+];
+/** Bot ka avatar (dukaan se khareedne ki zaroorat nahi, sirf dikhawe ke liye). */
+const BOT_CHARACTER_ID = 'ROBOT';
 
 /** Game poora khatam hone par (GAME_RESULT) ek baar bheja jata hai. */
 export interface FinishedGame {
@@ -88,6 +97,10 @@ export class RoomsService {
   private readonly disconnected = new Set<PlayerId>();
   /** Login kiye players ka pehna hua character (guest ka nahi: unka DEFAULT). Gateway bharta hai. */
   private readonly characterOf = new Map<PlayerId, string>();
+  /** Kaun se PlayerIds bots hain (globally unique ids, isliye ek hi set kaafi hai). */
+  private readonly bots = new Set<PlayerId>();
+  /** Round ROUND_ACTIVE ho gaya: gateway ko bataata hai (bot Mantri ka auto-guess schedule karne ke liye). */
+  onRoundStarted: ((code: string) => void) | null = null;
 
   /** Player ka avatar set/hatao (null = DEFAULT). Room ka naya view gateway broadcast karta hai. */
   setCharacter(playerId: PlayerId, characterId: string | null): void {
@@ -143,11 +156,17 @@ export class RoomsService {
     room.players = room.players.filter((p) => p.id !== playerId);
     room.game = null;
     room.vote = null;
-    if (room.players.length === 0) {
+    // Koi insaan na bacha (sirf bots, ya bilkul khaali): room bekaar hai, saaf kar do.
+    if (room.players.every((p) => this.bots.has(p.id))) {
+      for (const p of room.players) this.forgetBot(p.id);
       this.rooms.delete(code);
       return null;
     }
-    if (room.hostId === playerId) room.hostId = (room.players[0] as PlayerInfo).id;
+    if (room.hostId === playerId) {
+      // Host hamesha insaan hona chahiye (bot host game aage nahi badha sakta).
+      const nextHost = room.players.find((p) => !this.bots.has(p.id));
+      room.hostId = (nextHost ?? (room.players[0] as PlayerInfo)).id;
+    }
     return code;
   }
 
@@ -159,6 +178,7 @@ export class RoomsService {
       throw new RoomError('NEED_FULL_ROOM', `Game ke liye ${MAX_ROOM_PLAYERS} players chahiye.`);
     }
     room.game = this.runEngine(() => startGame(createGame(room.players), this.random));
+    this.onRoundStarted?.(room.code); // ROUND_ACTIVE ho gaya: bot Mantri ho to auto-guess schedule ho
     return room.code;
   }
 
@@ -183,8 +203,91 @@ export class RoomsService {
         totals: room.game.totals,
         winnerIds: getWinnerIds(room.game),
       });
+    } else {
+      this.onRoundStarted?.(room.code); // naya round ROUND_ACTIVE
     }
     return room.code;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Bots. Engine ko bot ka pata hi nahi chalta — ye sirf ek normal PlayerId hai.
+  // ---------------------------------------------------------------------------
+
+  isBot(playerId: PlayerId): boolean {
+    return this.bots.has(playerId);
+  }
+
+  /**
+   * Host khaali seat me bot daalta hai. Sirf LOBBY me, sirf host, room full na ho.
+   * Naya bot id aur uska naam wapas milta hai (gateway broadcast karega).
+   */
+  addBot(hostId: PlayerId): { code: string; bot: PlayerInfo } {
+    const room = this.requireRoom(hostId);
+    if (room.hostId !== hostId) throw new RoomError('NOT_HOST', 'Sirf host bot add kar sakta hai.');
+    if (room.game) throw new RoomError('GAME_IN_PROGRESS', 'Game shuru ho chuka hai.');
+    if (room.players.length >= MAX_ROOM_PLAYERS) throw new RoomError('ROOM_FULL', 'Room full hai.');
+    const bot = this.makeBot(room.players.map((p) => p.name));
+    room.players.push(bot);
+    this.bots.add(bot.id);
+    this.characterOf.set(bot.id, BOT_CHARACTER_ID);
+    this.roomOfPlayer.set(bot.id, room.code);
+    return { code: room.code, bot };
+  }
+
+  /** Host bot ko room se hatata hai (sirf LOBBY). */
+  removeBot(hostId: PlayerId, botId: PlayerId): string {
+    const room = this.requireRoom(hostId);
+    if (room.hostId !== hostId) throw new RoomError('NOT_HOST', 'Sirf host bot hata sakta hai.');
+    if (room.game) throw new RoomError('GAME_IN_PROGRESS', 'Game shuru ho chuka hai.');
+    if (!this.bots.has(botId) || !room.players.some((p) => p.id === botId)) {
+      throw new RoomError('BOT_NOT_FOUND', 'Ye bot is room me nahi hai.');
+    }
+    room.players = room.players.filter((p) => p.id !== botId);
+    this.forgetBot(botId);
+    return room.code;
+  }
+
+  /**
+   * Solo (ya kam) player: naya room banao, baaki seats bots se turant bharo, game shuru.
+   * Room code return hota hai.
+   */
+  playWithBots(hostId: PlayerId, rawName: string): string {
+    const code = this.createRoom(hostId, rawName);
+    while ((this.rooms.get(code) as Room).players.length < MAX_ROOM_PLAYERS) {
+      this.addBot(hostId);
+    }
+    return this.startGame(hostId);
+  }
+
+  /**
+   * Abhi ROUND_ACTIVE ho to, aur Mantri bot ho, to uska guess options ke saath deta hai.
+   * Gateway isse auto-guess schedule karne ke liye use karta hai. Warna null.
+   */
+  getBotMantriTask(code: string): { mantriId: PlayerId; options: PlayerId[] } | null {
+    const room = this.rooms.get(code);
+    const roles = room?.game?.roles;
+    if (!room || room.game?.phase !== 'ROUND_ACTIVE' || !roles) return null;
+    const mantriId = this.findByRole(roles, 'MANTRI');
+    if (!mantriId || !this.bots.has(mantriId)) return null;
+    const options = Object.keys(roles).filter((id) => roles[id] === 'SIPAHI' || roles[id] === 'CHOR');
+    return { mantriId, options };
+  }
+
+  private findByRole(roles: Record<PlayerId, Role>, role: Role): PlayerId | null {
+    return Object.keys(roles).find((id) => roles[id] === role) ?? null;
+  }
+
+  private makeBot(existingNames: readonly string[]): PlayerInfo {
+    const free = BOT_NAMES.filter((n) => !existingNames.includes(`Bot ${n}`));
+    const pool = free.length > 0 ? free : BOT_NAMES;
+    const picked = pool[Math.floor(this.random() * pool.length)] as string;
+    return { id: `bot-${randomUUID()}`, name: `Bot ${picked}` };
+  }
+
+  private forgetBot(botId: PlayerId): void {
+    this.bots.delete(botId);
+    this.characterOf.delete(botId);
+    this.roomOfPlayer.delete(botId);
   }
 
   /** Game khatam (GAME_RESULT) ke baad host same players ke saath room ko lobby me wapas laata hai. */
@@ -314,6 +417,7 @@ export class RoomsService {
         isHost: p.id === room.hostId,
         connected: !this.disconnected.has(p.id),
         character: this.characterOf.get(p.id) ?? DEFAULT_CHARACTER_ID,
+        isBot: this.bots.has(p.id),
       })),
       vote: room.vote
         ? {

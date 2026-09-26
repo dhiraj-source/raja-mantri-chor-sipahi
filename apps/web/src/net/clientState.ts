@@ -33,8 +33,8 @@ export interface ClientState {
   playerId: PlayerId | null;
   room: RoomView | null;
   game: PlayerGameView | null;
-  /** Quick match queue me hain to abhi kitne players wait kar rahe hain. */
-  queue: { size: number } | null;
+  /** Quick match queue me hain to abhi kaun-kaun wait kar raha hai. */
+  queue: { size: number; names: string[] } | null;
   /** Socket kis account se juda hai (server ne bataya); null = guest. */
   account: { displayName: string } | null;
   /** Abhi khatam hue game ka reward (server ne diya). */

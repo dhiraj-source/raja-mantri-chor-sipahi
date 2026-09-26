@@ -40,7 +40,10 @@ class Client {
         if (msg.event === 'FRIENDS_CHANGED') this.friendsChanged++;
         if (msg.event === 'INVITE') this.invites.push(msg.data);
         if (msg.event === 'AUTH_STATE') this.authState = msg.data === null ? 'guest' : msg.data.displayName;
-        if (msg.event === 'QUEUE_STATE') this.queueSizes.push(msg.data ? msg.data.size : null);
+        if (msg.event === 'QUEUE_STATE') {
+          this.queueSizes.push(msg.data ? msg.data.size : null);
+          this.queueNames = msg.data ? msg.data.names : null;
+        }
         this.waiters = this.waiters.filter((w) => !w());
       });
     });
@@ -200,6 +203,10 @@ qs[0].send('QUICK_MATCH', { name: 'Q1' });
 qs[1].send('QUICK_MATCH', { name: 'Q2' });
 await qs[1].waitFor(() => queueSizes[1].includes(2), 'queue size 2');
 assert(queueSizes[0].includes(2), 'queue me wait kar rahe sabko size update mila');
+assert(
+  JSON.stringify(qs[0].queueNames) === JSON.stringify(['Q1', 'Q2']),
+  'queue naam bhi bhejta hai (sirf count nahi)',
+);
 qs[0].send('QUICK_MATCH', { name: 'Q1' });
 await qs[0].waitFor(() => qs[0].errors.includes('ALREADY_QUEUED'), 'already queued');
 assert(true, 'do baar queue me jaana reject');
@@ -213,6 +220,58 @@ assert(
   new Set(qs.map((x) => x.room.code)).size === 1 && qs[0].room.hostId === qs[0].id && qs.every((x) => queueSizes[qs.indexOf(x)].at(-1) === null),
   'QUICK MATCH: 4 players ka room bana, game turant shuru, queue khaali',
 );
+
+// ---- Bots: solo play, room fill, aur bot Mantri ka auto-guess ----
+const solo = new Client('Solo');
+await solo.ready;
+solo.send('PLAY_WITH_BOTS', { name: 'Solo' });
+await solo.waitFor(() => solo.game?.phase === 'ROUND_ACTIVE', 'solo vs bots started');
+assert(solo.room.players.length === 4 && solo.room.players.filter((p) => p.isBot).length === 3, 'PLAY_WITH_BOTS: 3 bots ne room bhar diya');
+assert(solo.room.players.every((p) => p.id === solo.id || p.isBot), 'baaki sab bots hain');
+for (let round = 1; round <= 4; round++) {
+  if (solo.game.canGuess) {
+    const raja = Object.entries(solo.game.visibleRoles).find(([, r]) => r === 'RAJA')?.[0];
+    const target = solo.game.players.find((p) => p.id !== raja && p.id !== solo.id);
+    solo.send('SUBMIT_GUESS', { guessedChorId: target.id });
+  }
+  // Insaan Mantri ho ya bot Mantri ho, dono soorat me result kuch second me aa jana chahiye
+  // (bot khud guess kar leta hai — koi sahi guess bhejne ki zaroorat nahi).
+  await solo.waitFor(() => solo.game?.phase === 'ROUND_RESULT' && solo.game.history.length === round, `solo round ${round} result`);
+  solo.send('NEXT_ROUND');
+  await solo.waitFor(() => solo.game?.phase === (round === 4 ? 'GAME_RESULT' : 'ROUND_ACTIVE'), `solo after round ${round}`);
+}
+assert(true, 'bot Mantri ne khud guess kiya (bina insaan input ke round result aaya)');
+solo.ws.close();
+
+// Room create karke host bots se bhare (dusra tarika)
+const host = new Client('Host');
+await host.ready;
+host.send('CREATE_ROOM', { name: 'Host' });
+await host.waitFor(() => host.room, 'host room created');
+host.send('ADD_BOT');
+host.send('ADD_BOT');
+host.send('ADD_BOT');
+await host.waitFor(() => host.room?.players.length === 4, 'room bots se bhara');
+const firstBot = host.room.players.find((p) => p.isBot).id;
+host.send('REMOVE_BOT', { botId: firstBot });
+await host.waitFor(() => host.room?.players.length === 3, 'ek bot hataya');
+assert(!host.room.players.some((p) => p.id === firstBot), 'REMOVE_BOT se seat khaali hui');
+host.send('ADD_BOT');
+await host.waitFor(() => host.room?.players.length === 4, 'seat dobara bot se bhari');
+host.send('START_GAME');
+await host.waitFor(() => host.game?.phase === 'ROUND_ACTIVE', 'mixed room game started');
+for (let round = 1; round <= 4; round++) {
+  if (host.game.canGuess) {
+    const raja = Object.entries(host.game.visibleRoles).find(([, r]) => r === 'RAJA')?.[0];
+    const target = host.game.players.find((p) => p.id !== raja && p.id !== host.id);
+    host.send('SUBMIT_GUESS', { guessedChorId: target.id });
+  }
+  await host.waitFor(() => host.game?.phase === 'ROUND_RESULT' && host.game.history.length === round, `mixed round ${round} result`);
+  host.send('NEXT_ROUND');
+  await host.waitFor(() => host.game?.phase === (round === 4 ? 'GAME_RESULT' : 'ROUND_ACTIVE'), `mixed after round ${round}`);
+}
+assert(true, 'host+bots ka mixed room bhi poora khela gaya');
+host.ws.close();
 
 // ---- Vote: WAIT jeeta -> grace dobara -> naya vote; gayab wapas aaya -> vote khatam; time out -> WAIT ----
 const awayRole = qs[3].game.myRole;

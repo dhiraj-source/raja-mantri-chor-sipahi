@@ -121,6 +121,24 @@ apps/api/src/rooms:
 - Audio is 100% client side: web/src/audio/sounds.ts holds the tunes as tone data and a SoundPlayer on the Web Audio API (no audio files). Reactions are already broadcast by the server; each browser plays the tune locally. Mute is stored in localStorage.
 - scripts/smoke-ws.mjs = protocol level end-to-end test against a running API; scripts/ui-check.mjs = real-browser test (headless Chrome over the DevTools protocol) against the running API + web dev server. Both create test accounts in the dev database.
 
+## Bots (RMC-0019, Phase 2)
+
+- Bots are invisible to GameEngine: a bot "player" is just a `PlayerId` string (`bot-<uuid>`)
+  like any other. All bot bookkeeping (which ids are bots, their name/avatar) lives in
+  RoomsService, not the engine — this keeps the "GameEngine must not depend on anything"
+  rule from CLAUDE.md intact.
+- `RoomsService.addBot`/`removeBot` (host only, lobby only) and `playWithBots` (one call:
+  create room, fill to 4, start) — bots go through the exact same `room.players` array and
+  `roomOfPlayer` lookup as real players, so the rest of the system (rounds, scoring, voting,
+  reconnection) doesn't need to know bots exist.
+- `RoomsService.onRoundStarted` is a hook (same pattern as `onGameFinished`) that
+  RoomsGateway uses to schedule a bot's Mantri guess (`BOT_GUESS_DELAY_MS`, random pick
+  between the two non-Raja/non-Mantri candidates) via `getBotMantriTask`, which is the one
+  place that peeks at `GameState.roles` from outside the engine (server-only, never sent to
+  a browser).
+- Host is always human: if the host leaves, host transfers to a human if one remains, or the
+  room is deleted if only bots are left (avoids orphaned bot-only rooms).
+
 ## Characters and shop (RMC-0013)
 
 - The catalog (ids, emoji, price, minLevel) lives in shared-types so server and browser see the same list; only the server decides purchases.
