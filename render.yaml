@@ -1,0 +1,40 @@
+# Render Blueprint — reference/documentation for the setup that is actually live.
+# (Ye resources CLI se bane the, is file se sync karke banaye nahi gaye. Isko future
+# reproducibility/documentation ke liye rakha hai — Render dashboard me "New Blueprint
+# Instance" se isi tarah dobara bhi bana sakte ho agar kabhi account badalna pade.)
+#
+# Live URLs:
+#   API:  https://rmc-api-etep.onrender.com
+#   Web:  https://raja-mantri-chor-sipahi-five.vercel.app  (Vercel par, iss file me nahi)
+
+services:
+  - type: web
+    name: rmc-api
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: rmc-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: rmc-redis
+          property: connectionString
+      - key: CORS_ORIGINS
+        sync: false # Vercel deploy hone ke baad uska URL yahan dashboard me daalo
+
+databases:
+  - name: rmc-postgres
+    plan: free
+    region: singapore
+
+# NOTE: Is CLI/API version me Key Value (Redis) ko render.yaml se define karne ka
+# seedha tareeka nahi tha, isliye CLI se banaya gaya (`render keyvalues create`).
+# Naam yahan sirf documentation ke liye: rmc-redis (free plan, region singapore).

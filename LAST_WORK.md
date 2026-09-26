@@ -1,29 +1,28 @@
 # LAST WORK
 
-## Latest (DEPLOYMENT.md Step 1 complete)
-Owner said "ok proceed" (deploy). Committed everything (2 commits: full game, then a small memory-file update) after checking for secrets. Owner created the empty GitHub repo (`dhiraj-source/raja-mantri-chor-sipahi`) via the browser link given. `git remote add origin` + `git push -u origin main` failed once with a stale cached GitHub credential ("Invalid username or token"); cleared it with `git credential reject` and the retry succeeded (this second attempt is what actually prompted the owner's real GitHub auth). Verified: `git ls-remote origin main` hash matches local HEAD exactly, and the GitHub API shows the repo with `default_branch: main` and a recent `pushed_at`.
-Also cleaned up 3 leftover smoke-test accounts (fa_/fb_/fc_) in the dev DB from the earlier Docker verification session (owner's own real accounts dhiraj/anjali/dkumar/athakur/tuntun were left alone).
+## Latest (RMC-0018 — deployed live)
+Owner said "i connect the railway with my github, can't you do that" — took that as a green light to drive the whole deployment via CLI instead of asking them to click through dashboards.
 
-## Next
-DEPLOYMENT.md Steps 2-4: Railway (new project from the now-pushed GitHub repo, Dockerfile builder pointed at apps/api/Dockerfile, add Postgres + Redis plugins, set DATABASE_URL/REDIS_URL/CORS_ORIGINS), then Vercel (import same repo, vercel.json handles the build, set VITE_API_URL/VITE_WS_URL to the Railway URL), then update CORS_ORIGINS on Railway with the real Vercel URL. All owner's-login steps; ask them to go through DEPLOYMENT.md and report back the Railway URL once generated.
+- Found and used the Railway CLI (`npx @railway/cli`), logged in via its browser OAuth flow (owner completed it) — but `railway init` failed: **their free trial had expired**, needs a paid plan. This is a real billing decision, so I stopped and asked; owner chose **Render** (free tier) over Railway (pay) or Fly.io.
+- Checked Render's actual current free-tier terms via web search/fetch before committing to it (important: free Postgres auto-deletes 30+14 days after creation — documented clearly for the owner).
+- Installed Render CLI via `winget`, logged in via its browser device-code flow (owner completed it). Created via CLI: `rmc-postgres` (free Postgres), `rmc-redis` (free Key Value), `rmc-api` (Docker web service from the GitHub repo).
+- Hit two real bugs and fixed them: Git Bash mangled a bare `/health` CLI argument into a Windows path; and the CLI has no flag to set the Dockerfile path independently from the build root, which would have broken the monorepo build — worked around by calling Render's REST API directly (using the CLI's own stored token) to PATCH `serviceDetails.envSpecificDetails` correctly, then triggering a deploy (PATCH alone doesn't redeploy).
+- Installed Vercel CLI via npx, logged in (owner completed browser auth), `vercel link` (auto-connected GitHub too), set `VITE_API_URL`/`VITE_WS_URL` to the Render URL, `vercel --prod` to deploy.
+- Wired CORS_ORIGINS on Render to the real Vercel URL once known, redeployed.
+- Verified for real: `/health` 200 + correct CORS on the live Render URL; full 4-round game smoke-tested over the live `wss://` URL; **opened the actual production web URL in headless Chrome** — connects cleanly, zero console errors, screenshot taken.
+- Cleaned up all locally-extracted secrets (API keys, DB connection strings were in a temp folder outside the repo, deleted after use; nothing went into git).
+- Removed the now-unused railway.json, added render.yaml (documentation/reference — resources were made via CLI, not by syncing this file), rewrote DEPLOYMENT.md for what's actually live.
 
-## Before that (RMC-0017)
-Owner asked for a deployment file, but first wanted to discuss 5 questions (Docker? Vercel free plan? GitHub/Bitbucket? containers? auto-deploy/MCP?). Discussed each in Hinglish, flagged the key blocker myself: Vercel is serverless and cannot run our WebSocket + in-memory-state API, so it can only host the web frontend. Asked the owner 3 real decisions via AskUserQuestion: API host, git host, whether to provision Redis now. Answers: Railway (API), GitHub, provision Redis now.
+## LIVE URLs
+- Web: https://raja-mantri-chor-sipahi-five.vercel.app
+- API: https://rmc-api-etep.onrender.com
+- GitHub: https://github.com/dhiraj-source/raja-mantri-chor-sipahi (main; Vercel + Render both auto-deploy on push)
 
-Built: apps/api/Dockerfile (multi-stage, monorepo-aware), railway.json, root vercel.json (build:web script), .github/workflows/ci.yml, .env.production.example, DEPLOYMENT.md (full step-by-step in Hinglish incl. troubleshooting table). Updated apps/api/src/main.ts to listen on Railway's PORT env var.
-
-**Actually verified, not just written:**
-- Built the real Docker image (`docker build -f apps/api/Dockerfile .`). Found and fixed a genuine bug during this: `.dockerignore` patterns without a leading `**/` only match at the context root (unlike .gitignore's any-depth default) — stale local `*.tsbuildinfo` files were leaking into the image and making `tsc -b` silently no-op, so `nest build` failed with "Cannot find module '@rmc/shared-types'". Fixed with `**/*.tsbuildinfo` etc.
-- Ran the built image against the project's real docker-compose Postgres + Redis containers: migrations ran automatically, `/health` returned 200, CORS header correctly present/absent for allowed/disallowed origins, and the full smoke test (scripts/smoke-ws.mjs, 99 checks) passed talking to the containerized API.
-- Ran `npm run build:web` (Vercel's exact build command) and confirmed `apps/web/dist` matches vercel.json's outputDirectory. Confirmed `npm ci` (Vercel's install command) works cleanly on the lockfile.
-- Cleaned up: stopped/removed the test container and image, deleted the smoke-test accounts from the dev database.
-- 236 unit tests + lint + build still pass after the main.ts/package.json changes.
+## Important: owner must act by ~2026-10-26
+Render's free PostgreSQL expires 30 days after creation (created 2026-09-26). See DEPLOYMENT.md for the options (upgrade / recreate / migrate).
 
 ## Current phase
-All CLAUDE.md long-term feature items are implemented (as of RMC-0015). RMC-0016/0017 are infra (LAN access, deployment), not gameplay features.
-
-## Blocked on the owner (cannot be automated)
-DEPLOYMENT.md Steps 1–4: create the GitHub repo and push (exact commands given), then log into Railway and Vercel (OAuth/browser login) and connect the repo + set a few env vars (exact values given, including how to reference Railway's Postgres/Redis plugins). No MCP/CLI available here for Railway or Vercel, and GitHub's `gh` CLI isn't installed in this environment either — the owner runs these themselves following the guide.
+Every long-term feature in CLAUDE.md is implemented AND the game is live. Remaining backlog is polish/infra, not features: Redis actually wired into rooms/sessions (still just provisioned), accessibility review, real-phone check, visual check of vote/friends/invite screens, and the looming free-Postgres-expiry decision above.
 
 ## Next step
-Once the owner has deployed (or if they want to skip that for now), remaining backlog: Redis actually wired into rooms/sessions/queue/tokens (currently just provisioned, unused), accessibility review, real-phone check, visual check of vote/friends/invite screens in a real browser.
+Whatever the owner wants next — could be: decide the Postgres plan before it expires, real-phone testing on the live URL, or a new feature. Nothing is blocking; ask the owner.

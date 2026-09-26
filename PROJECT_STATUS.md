@@ -8,7 +8,7 @@ PHASES 1–4 done (Foundation, Rooms, Core game, Reconnection) + parts of Social
 Next big block = accounts + database (needs Docker/PostgreSQL running).
 
 ## Overall Status
-Game poora khelne layak hai (2 browser tabs = 2 players, ya smoke script). Database wale features baaki hain.
+**LIVE**: https://raja-mantri-chor-sipahi-five.vercel.app (verified working end-to-end in a real browser, real production API). Also still fully playable locally (2 browser tabs = 2 players, ya smoke script).
 
 ## Completed
 - RMC-0001 Memory/documentation system.
@@ -27,13 +27,14 @@ Game poora khelne layak hai (2 browser tabs = 2 players, ya smoke script). Datab
 - RMC-0014 Audio: synthesized sounds for reactions and game events + mute button.
 - RMC-0015 Real-browser UI check (`npm run ui:check`): whole game played through the UI in headless Chrome on a 390px phone size; no overflow, no console errors.
 - RMC-0016 Open the app from a phone on the same WiFi (LAN host + CORS).
-- RMC-0017 Deployment setup: Dockerfile for API (Railway) + Vercel build config for web + CI workflow + DEPLOYMENT.md. Real Docker build verified end-to-end (99-check smoke test passed inside the container). Not yet deployed to a live account — see DEPLOYMENT.md for the owner's one-time steps.
+- RMC-0017 Deployment setup: Dockerfile for API + Vercel build config for web + CI workflow. Real Docker build verified end-to-end (99-check smoke test passed inside the container).
+- RMC-0018 **Actually deployed, live**: Render (API + free Postgres + free Redis) + Vercel (web), GitHub-connected auto-deploy on both. Verified with a real headless-Chrome visit to the production URL (connects, no console errors) and a live smoke test (4-round game, rewards) against the production WebSocket. Railway wasn't used in the end (free trial had expired) — see DEPLOYMENT.md for the live URLs and the one thing owner must act on: free Postgres expires ~2026-10-26.
 
 ## In Progress
 - Kuch nahi.
 
 ## Pending
-- Railway (API+Postgres+Redis) and Vercel (web) dashboard connect + env vars — DEPLOYMENT.md Steps 2-4, owner's one-time login. (Step 1, GitHub push, is DONE: https://github.com/dhiraj-source/raja-mantri-chor-sipahi, branch main.)
+- **Act before ~2026-10-26**: Render's free PostgreSQL (`rmc-postgres`) expires 30 days after creation (created 2026-09-26). Upgrade the plan, or migrate to a new free database, before then — see DEPLOYMENT.md.
 
 ## Planned
 - Redis for rooms / queue / reconnect sessions / auth tokens / presence (container runs but is unused). Deliberately NOT started: it is a big refactor (async token store, serializable room + GameState storage, cross-server WebSocket broadcast) that only matters for restarts or running more than one API server. Login tokens and rooms are lost on an API restart until then.
@@ -47,7 +48,7 @@ Run locally (3 terminals, folder D:\ANJALI\GAME): `npm run db:up` (once, Docker 
 Realtime: WebSocket (path /ws)
 Temporary state: in API memory (Redis 7 in Docker, NOT used yet)
 Tests: Vitest (engine 37, api 122 incl. real-PostgreSQL and cors tests, web 77 = 236).
-Deployment: apps/api/Dockerfile (Railway) + vercel.json (Vercel) + .github/workflows/ci.yml — see DEPLOYMENT.md. Smoke test: run the API with `RECONNECT_GRACE_MS=1500 VOTE_DURATION_MS=1500`, then `npm run smoke -w @rmc/api`. + WebSocket smoke test (npm run smoke -w @rmc/api)
+Deployment: LIVE at https://raja-mantri-chor-sipahi-five.vercel.app (web, Vercel) + https://rmc-api-etep.onrender.com (API, Render). apps/api/Dockerfile + render.yaml (reference) + vercel.json + .github/workflows/ci.yml — see DEPLOYMENT.md. Local smoke test: run the API with `RECONNECT_GRACE_MS=1500 VOTE_DURATION_MS=1500`, then `npm run smoke -w @rmc/api`.
 Lint: ESLint 9 + typescript-eslint
 
 ## Game Roles
@@ -76,4 +77,4 @@ None known. UI was checked in a real headless Chrome (390px phone + desktop); vo
 - (was: no commit yet — fixed, see Pending above for the push/deploy steps still left)
 
 ## Last Change
-RMC-0017 — Deployment setup (Railway + Vercel), Docker-build-verified
+RMC-0018 — Deployed live (Render + Vercel), verified in a real browser

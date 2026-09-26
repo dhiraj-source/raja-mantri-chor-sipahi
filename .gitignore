@@ -7,3 +7,6 @@ coverage/
 ui-screenshots/
 .vite/
 *.log
+
+.vercel
+.env*

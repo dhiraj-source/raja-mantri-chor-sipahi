@@ -106,14 +106,15 @@ apps/api/src/rooms:
 - Reactions: RoomsService validates emoji + cooldown, gateway broadcasts to the room only. No effect on GameState.
 - Rematch: host only, only in GAME_RESULT, sets room.game = null (lobby, same players).
 
-## Deployment (RMC-0017)
+## Deployment (RMC-0017/0018) — LIVE
 
-- Split hosting: web (static build) on Vercel; api (persistent Node process, WebSocket, in-memory room/session state) on Railway. Vercel's serverless model cannot run the api as-is — this was a deliberate, discussed decision, not an oversight.
-- apps/api/Dockerfile: multi-stage, monorepo-aware (build context = repo root, not apps/api). Copies the whole repo so package-lock.json stays valid for `npm ci`, builds shared-types + game-engine + api, prunes devDependencies, then a slim runtime stage copies only node_modules + built dist + migrations. railway.json points Railway at this Dockerfile and the /health healthcheck.
+- Split hosting: web (static build) on **Vercel**; api (persistent Node process, WebSocket, in-memory room/session state) on **Render**. Vercel's serverless model cannot run the api as-is — this was a deliberate, discussed decision, not an oversight. (Railway was the original choice but its free trial had expired on the owner's account; Render was picked instead.)
+- apps/api/Dockerfile: multi-stage, monorepo-aware (build context = repo root, not apps/api). Copies the whole repo so package-lock.json stays valid for `npm ci`, builds shared-types + game-engine + api, prunes devDependencies, then a slim runtime stage copies only node_modules + built dist + migrations. Render's `rmc-api` service builds from this Dockerfile (path `apps/api/Dockerfile`, context `.`) — the CLI's `services create` doesn't expose separate dockerfile-path/context flags, so this was set via a direct PATCH to Render's REST API (`serviceDetails.envSpecificDetails`).
 - vercel.json (repo root) drives the web build directly (installCommand/buildCommand/outputDirectory) so no Vercel dashboard "Root Directory" configuration is needed for the monorepo.
-- CORS (cors.ts, RMC-0016) is the production gate: the deployed web origin must be added to `CORS_ORIGINS` on Railway or the browser gets blocked.
-- `.github/workflows/ci.yml` runs build+lint+test on every push as a safety net; actual deployment is triggered by Railway's and Vercel's own GitHub App integration (git push -> auto deploy), not by this workflow.
-- See DEPLOYMENT.md for the full step-by-step (includes the one-time manual login/connect steps that cannot be automated from here).
+- CORS (cors.ts, RMC-0016) is the production gate: the deployed web origin must be in `CORS_ORIGINS` on Render or the browser gets blocked. Currently set to the live Vercel URL.
+- `.github/workflows/ci.yml` runs build+lint+test on every push as a safety net; actual deployment is triggered by Render's and Vercel's own GitHub App integration (git push -> auto deploy), not by this workflow.
+- render.yaml is a **reference/documentation** Blueprint (the real resources were created via the Render CLI, not by syncing this file) — useful if the setup ever needs to be recreated.
+- See DEPLOYMENT.md for the live URLs, env vars, and the free-Postgres 30-day expiry the owner needs to handle.
 
 ## Audio and verification tooling (RMC-0014/0015)
 

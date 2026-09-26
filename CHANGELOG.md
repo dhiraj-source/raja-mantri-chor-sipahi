@@ -628,3 +628,44 @@ No protocol change.
 - Redis is provisioned in the deployment (per owner's choice) but application code still keeps rooms/sessions/queue/auth-tokens in memory — the Redis instance sits unused until that refactor happens (tracked in PROJECT_STATUS.md).
 - No custom domain, no staging environment, no secrets manager beyond the platforms' own env var storage.
 - The Docker image bundles some unused runtime deps (e.g. react/react-dom end up in the pruned node_modules because they're a "dependency" of the web workspace, not a devDependency) — harmless but not minimal; could be trimmed later with a per-workspace install if it ever matters.
+
+# RMC-0018
+
+## Feature
+Actually deployed: game is live (Render API + Vercel web)
+
+## Status
+COMPLETE and verified end-to-end on the real production URLs.
+
+## What changed
+- Owner's Railway trial had expired (needs a paid plan); owner chose Render (free tier) instead. Did the whole thing via CLI (no dashboard clicking) after two browser logins (Render CLI OAuth device flow, Vercel CLI OAuth) — both completed by the owner in their browser when prompted.
+- Installed Render CLI via winget (`Render.CLI`). Created (via `render postgres create` / `render keyvalues create` / `render services create`): `rmc-postgres` (free Postgres), `rmc-redis` (free Key Value), `rmc-api` (Docker web service, region Singapore) linked to the GitHub repo.
+- Found two CLI/environment gotchas while doing this and fixed them: (1) Git Bash's automatic path conversion turned a bare `/health` argument into a Windows path (`C:/Program Files/Git/health`) when passed to the Windows render.exe — worked around by sending values through JSON files instead of bare CLI args where it mattered. (2) `render services create` has no flag to set `dockerfilePath`/`dockerContext` independently of `--root-directory`, which would have broken the monorepo build context; used Render's public REST API directly (PATCH `/services/:id` with `serviceDetails.envSpecificDetails`) with the CLI's own stored API key (from `~/.render/cli.yaml`) to set `dockerfilePath: ./apps/api/Dockerfile`, `dockerContext: .`, and fix the health check path, then triggered a deploy explicitly (Render docs: PATCH does not auto-redeploy).
+- Installed Vercel CLI via npx. `vercel link` created the project and auto-connected the GitHub repo (no separate step needed). Set `VITE_API_URL` / `VITE_WS_URL` (production) to the real Render URL, then `vercel --prod` deployed the web app. Vercel CLI itself added `.vercel` and `.env*` to .gitignore.
+- Removed railway.json (unused now); added render.yaml as a documentation/reference Blueprint (resources were created via CLI, not by syncing this file). Rewrote DEPLOYMENT.md for what's actually live, including a clear warning that Render's free Postgres expires 30 days after creation (2026-09-26 -> renew/upgrade/migrate by ~2026-10-26).
+- Updated Render's `CORS_ORIGINS` to the real Vercel URL after it was known, and triggered a second deploy for that (env var changes don't auto-redeploy either).
+
+## Reason
+Owner asked to actually deploy, not just prepare files.
+
+## Database
+Render-managed PostgreSQL (free, 1GB, expires in 30 days per Render's free-tier policy) and Key Value/Redis (free, unused by app code, same as before).
+
+## API
+Live at https://rmc-api-etep.onrender.com. No route/behavior change from RMC-0017.
+
+## WebSocket
+Live at wss://rmc-api-etep.onrender.com/ws.
+
+## Tests
+- `/health` returns 200 on the live URL; CORS header present only for the allowed Vercel origin, absent for `http://evil.com`.
+- Ran scripts/smoke-ws.mjs against the live wss:// URL: room creation, full 4-round game (secrets hidden correctly, correct scores/totals), rematch, and a fresh game all passed (14 checks). Reconnect/vote checks in that same script need short grace/vote timings not to be set on a real production server, so those specific checks were skipped there — the identical code path was already fully verified (99 checks incl. voting/reconnect) against a local Docker container with real Postgres+Redis earlier in RMC-0017.
+- Opened the real production web URL in headless Chrome (390px phone size): page loads, WebSocket connects (Home screen with "Quick match"/"Create a new room" shown, not stuck on "Connecting…"), zero console or network errors. Screenshot taken.
+- All local secrets (API keys, DB connection strings) extracted to a local temp folder outside the repo during setup and deleted afterward; none were committed.
+
+## Known limitations
+- Render's free web service sleeps after 15 minutes of inactivity (30-60s cold start on the next request) — acceptable for a hobby project, not for real concurrent players expecting instant response after idle periods.
+- Free Postgres expires in 30 days (see DEPLOYMENT.md) — this needs owner action before ~2026-10-26.
+- Redis is provisioned but still unused by application code (same pending item as RMC-0012/0017).
+- No custom domain; Vercel's own `.vercel.app` and Render's own `.onrender.com` subdomains are in use.
+- The `dhirajsources-projects` Vercel scope and `My Workspace` Render workspace now each hold this one project; no team/environment separation (staging vs production) set up yet.
