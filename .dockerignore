@@ -1,0 +1,14 @@
+# NOTE: Dockerignore .gitignore jaisa nahi hai — bina "**/" ke pattern sirf ROOT
+# folder me match karta hai, subfolders me nahi. Isliye har jagah "**/" lagaya hai.
+node_modules
+**/node_modules
+dist
+**/dist
+coverage
+**/coverage
+ui-screenshots
+.git
+.env
+.env.local
+*.tsbuildinfo
+**/*.tsbuildinfo

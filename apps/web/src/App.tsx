@@ -1,0 +1,194 @@
+import { useEffect, useRef } from 'react';
+import { useSounds } from './audio/useSounds';
+import { soundForReaction } from './audio/sounds';
+import { MAX_NAME_LENGTH, MAX_ROOM_PLAYERS, type Reaction } from '@rmc/shared-types';
+import { useAuth } from './auth/useAuth';
+import { useFriends } from './auth/useFriends';
+import { AccountPanel } from './components/AccountPanel';
+import { FriendsPanel } from './components/FriendsPanel';
+import { InviteToasts } from './components/InviteToasts';
+import { ShopPanel } from './components/ShopPanel';
+import { useGameSocket } from './net/useGameSocket';
+import { useI18n } from './i18n/I18nProvider';
+import { GameScreen } from './components/GameScreen';
+import { Home } from './components/Home';
+import { LanguageSwitch } from './components/LanguageSwitch';
+import { Lobby } from './components/Lobby';
+import { QueueScreen } from './components/QueueScreen';
+import { ReactionFeed } from './components/Reactions';
+import { Button, Card, ErrorBanner } from './components/ui';
+
+/**
+ * Browser sirf dikhata hai aur actions bhejta hai.
+ * Roles, score aur result server decide karta hai.
+ */
+export function App() {
+  const { t } = useI18n();
+  const { state, send, reconnect, dismissError, expireReaction, dismissInvite } = useGameSocket();
+  const { room, game, queue, playerId, connection, error, reactions, reward, invites, friendsVersion } = state;
+  const reconnecting = connection === 'reconnecting';
+  const auth = useAuth();
+  const { authToken, refresh } = auth;
+  const friends = useFriends(authToken, friendsVersion);
+  const sounds = useSounds();
+  const { play } = sounds;
+
+  // ---- Awaazen: har event par ek baar ----
+  const heardReaction = useRef(-1);
+  useEffect(() => {
+    for (const item of reactions) {
+      if (item.key <= heardReaction.current) continue;
+      heardReaction.current = item.key;
+      const sound = soundForReaction(item.emoji);
+      if (sound) play(sound);
+    }
+  }, [reactions, play]);
+
+  const lastResult = game?.history[game.history.length - 1];
+  const roundKey = game?.phase === 'ROUND_RESULT' ? `${game.currentRound}` : null;
+  useEffect(() => {
+    if (roundKey && lastResult) play(lastResult.guessCorrect ? 'CORRECT' : 'WRONG');
+    // Sirf naye round result par (lastResult usi ke saath badalta hai).
+  }, [roundKey]);
+
+  const won = game?.phase === 'GAME_RESULT' && playerId !== null && game.winnerIds.includes(playerId);
+  useEffect(() => {
+    if (won) play('WIN');
+  }, [won, play]);
+
+  const inviteCount = invites.length;
+  const heardInvites = useRef(0);
+  useEffect(() => {
+    if (inviteCount > heardInvites.current) play('INVITE');
+    heardInvites.current = inviteCount;
+  }, [inviteCount, play]);
+
+  // Har naye/wapas aaye socket par (aur login/logout par) server ko batao ki hum kaun hain.
+  useEffect(() => {
+    if (connection === 'open') send({ event: 'AUTHENTICATE', data: { authToken } });
+  }, [connection, playerId, authToken, send]);
+
+  // Game ka reward aaya: profile (XP, level, history) server se dobara lo.
+  useEffect(() => {
+    if (reward) void refresh();
+  }, [reward, refresh]);
+
+  const react = (emoji: Reaction) => send({ event: 'REACTION', data: { emoji } });
+  const leave = () => send({ event: 'LEAVE_ROOM' });
+  const nameOf = (id: string) => room?.players.find((p) => p.id === id)?.name ?? '?';
+
+  let screen;
+  if (connection === 'connecting' || (reconnecting && !room)) {
+    screen = (
+      <p className="animate-pulse text-center text-stone-300">
+        {reconnecting ? t('app.reconnecting') : t('app.connecting')}
+      </p>
+    );
+  } else if (connection === 'closed') {
+    screen = (
+      <Card className="space-y-3 text-center">
+        <p>{t('app.closed')}</p>
+        <Button onClick={reconnect}>{t('app.reconnect')}</Button>
+      </Card>
+    );
+  } else if (room && game) {
+    screen = (
+      <GameScreen
+        room={room}
+        game={game}
+        myId={playerId}
+        reward={reward}
+        onGuess={(guessedChorId) => send({ event: 'SUBMIT_GUESS', data: { guessedChorId } })}
+        onNextRound={() => send({ event: 'NEXT_ROUND' })}
+        onRematch={() => send({ event: 'REMATCH' })}
+        onLeave={leave}
+        onReact={react}
+        onVote={(choice) => send({ event: 'VOTE', data: { choice } })}
+      />
+    );
+  } else if (room) {
+    screen = (
+      <Lobby
+        room={room}
+        myId={playerId}
+        onStart={() => send({ event: 'START_GAME' })}
+        onLeave={leave}
+        onReact={react}
+        friends={authToken ? friends.overview.friends : undefined}
+        onInvite={(accountId) => send({ event: 'INVITE_FRIEND', data: { accountId } })}
+      />
+    );
+  } else if (queue) {
+    screen = <QueueScreen size={queue.size} onCancel={() => send({ event: 'CANCEL_QUICK_MATCH' })} />;
+  } else {
+    screen = (
+      <div className="space-y-4">
+        <InviteToasts
+          invites={invites}
+          onJoin={(invite) => {
+            send({
+              event: 'JOIN_ROOM',
+              data: { code: invite.roomCode, name: auth.profile?.displayName ?? invite.fromName },
+            });
+            dismissInvite(invite.key);
+          }}
+          onDismiss={dismissInvite}
+        />
+        <AccountPanel
+          profile={auth.profile}
+          loggedIn={authToken !== null}
+          error={auth.error}
+          busy={auth.busy}
+          onLogin={auth.login}
+          onRegister={auth.register}
+          onLogout={auth.logout}
+        />
+        {authToken && auth.profile && (
+          <ShopPanel
+            profile={auth.profile}
+            error={auth.shopError}
+            onBuy={(id) => void auth.buyCharacter(id)}
+            onEquip={(id) => void auth.equipCharacter(id)}
+          />
+        )}
+        {authToken && auth.profile && (
+          <FriendsPanel
+            overview={friends.overview}
+            error={friends.error}
+            onAdd={friends.addFriend}
+            onAccept={(id) => void friends.accept(id)}
+            onDecline={(id) => void friends.decline(id)}
+            onUnfriend={(id) => void friends.unfriend(id)}
+          />
+        )}
+        <Home
+          defaultName={auth.profile?.displayName}
+          onCreate={(name) => send({ event: 'CREATE_ROOM', data: { name } })}
+          onJoin={(code, name) => send({ event: 'JOIN_ROOM', data: { code, name } })}
+          onQuickMatch={(name) => send({ event: 'QUICK_MATCH', data: { name } })}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <main className="mx-auto min-h-screen w-full max-w-md px-4 py-6 pb-24">
+      <LanguageSwitch muted={sounds.muted} onToggleMute={sounds.toggleMuted} />
+      <h1 className="mb-6 mt-2 text-center text-3xl font-black text-amber-300">
+        👑 {t('app.title')}
+      </h1>
+      {reconnecting && room && (
+        <div role="status" className="mb-4 rounded-xl bg-amber-500/80 px-4 py-3 text-sm text-stone-900">
+          {t('app.reconnectBanner')}
+        </div>
+      )}
+      <ErrorBanner
+        message={error ? t(`err.${error}`, { max: error === 'INVALID_NAME' ? MAX_NAME_LENGTH : MAX_ROOM_PLAYERS }) : null}
+        closeLabel={t('app.close')}
+        onClose={dismissError}
+      />
+      {screen}
+      {room && <ReactionFeed items={reactions} nameOf={nameOf} onExpire={expireReaction} />}
+    </main>
+  );
+}

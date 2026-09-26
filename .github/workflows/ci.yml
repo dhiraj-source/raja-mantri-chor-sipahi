@@ -1,0 +1,25 @@
+name: CI
+
+# Har push aur PR par build + lint + test. Ye deployment se alag hai:
+# Vercel/Railway apne GitHub App se khud deploy karte hain (isi push par),
+# ye workflow sirf ek safety check hai (dono deploys ke bina bhi chalta hai).
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run lint
+      - run: npm test
+        # DATABASE_URL set nahi hai, isliye PostgreSQL-only tests khud skip ho jaate hain
+        # (in-memory wale sab chalte hain).
