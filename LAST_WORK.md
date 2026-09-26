@@ -1,6 +1,10 @@
 # LAST WORK
 
-## Latest (RMC-0017)
+## Latest (git commit done)
+Owner said "ok proceed" (deploy). Ran DEPLOYMENT.md Step 1's local part: reviewed the full `git status` for secrets (none), `git add -A`, one root commit (121 files, "Initial commit: full game (RMC-0001 to RMC-0017)"). Working tree is clean. Also found and cleaned up 3 leftover smoke-test accounts (fa_/fb_/fc_) in the dev DB from the earlier Docker verification session (owner's own real accounts dhiraj/anjali/dkumar/athakur/tuntun were left alone).
+Blocked on: no GitHub remote yet, and `gh` CLI isn't installed here, so the empty GitHub repo has to be created by the owner (git config shows their GitHub username is `dhiraj-source`). Once they give a repo URL (or say it's created), next action is `git remote add origin ... && git push -u origin master` (or rename to main first), then walk through DEPLOYMENT.md Steps 2-4 (Railway, Vercel, wiring CORS_ORIGINS).
+
+## Before that (RMC-0017)
 Owner asked for a deployment file, but first wanted to discuss 5 questions (Docker? Vercel free plan? GitHub/Bitbucket? containers? auto-deploy/MCP?). Discussed each in Hinglish, flagged the key blocker myself: Vercel is serverless and cannot run our WebSocket + in-memory-state API, so it can only host the web frontend. Asked the owner 3 real decisions via AskUserQuestion: API host, git host, whether to provision Redis now. Answers: Railway (API), GitHub, provision Redis now.
 
 Built: apps/api/Dockerfile (multi-stage, monorepo-aware), railway.json, root vercel.json (build:web script), .github/workflows/ci.yml, .env.production.example, DEPLOYMENT.md (full step-by-step in Hinglish incl. troubleshooting table). Updated apps/api/src/main.ts to listen on Railway's PORT env var.

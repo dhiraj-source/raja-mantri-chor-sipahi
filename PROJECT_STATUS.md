@@ -32,9 +32,9 @@ Game poora khelne layak hai (2 browser tabs = 2 players, ya smoke script). Datab
 ## In Progress
 - Kuch nahi.
 
-## Pending (owner asked to skip for now)
-- First git commit (repo is initialised, nothing committed; work exists only on disk). Now required as Step 1 of DEPLOYMENT.md, so this will happen as soon as the owner starts deploying.
-- Actually deploying to Railway/Vercel (files are ready and Docker-build-verified; the login/connect steps in DEPLOYMENT.md are the owner's to do).
+## Pending
+- Push to GitHub (git history now has 1 commit locally on `master`; no remote yet — need the owner to create the empty GitHub repo, `gh` CLI isn't available in this environment to do it automatically). GitHub username seen in git config: `dhiraj-source`.
+- Then Railway (API+Postgres+Redis) and Vercel (web) dashboard connect + env vars — DEPLOYMENT.md Steps 2-4, owner's one-time login.
 
 ## Planned
 - Redis for rooms / queue / reconnect sessions / auth tokens / presence (container runs but is unused). Deliberately NOT started: it is a big refactor (async token store, serializable room + GameState storage, cross-server WebSocket broadcast) that only matters for restarts or running more than one API server. Login tokens and rooms are lost on an API restart until then.
@@ -74,7 +74,7 @@ None known. UI was checked in a real headless Chrome (390px phone + desktop); vo
 - Smoke test creates accounts in the dev database on every run (delete rows named p1_..p4_*, fa_*, fb_*, fc_* when needed).
 - Editing files with non-ASCII text (emoji/Hindi) must be done with the Edit tool, not PowerShell Get-Content/Set-Content (it corrupts the encoding).
 - Web/Vitest alias shared-types to source because shared-types builds as CommonJS.
-- No commit yet in git.
+- (was: no commit yet — fixed, see Pending above for the push/deploy steps still left)
 
 ## Last Change
 RMC-0017 — Deployment setup (Railway + Vercel), Docker-build-verified
