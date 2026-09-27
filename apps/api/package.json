@@ -9,7 +9,8 @@
     "test": "vitest run",
     "smoke": "node scripts/smoke-ws.mjs",
     "smoke:dg": "node scripts/smoke-dg.mjs",
-    "smoke:bt": "node scripts/smoke-bt.mjs"
+    "smoke:bt": "node scripts/smoke-bt.mjs",
+    "smoke:ft": "node scripts/smoke-ft.mjs"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.15",

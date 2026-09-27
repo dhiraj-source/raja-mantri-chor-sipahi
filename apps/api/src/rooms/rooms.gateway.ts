@@ -9,7 +9,7 @@ import {
 } from '@nestjs/websockets';
 import type { OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import type { WebSocket } from 'ws';
-import { TICK_MS as BT_TICK_MS } from '@rmc/bomb-tag-engine';
+import { TICK_MS } from '@rmc/bomb-tag-engine';
 import { summarizeGameForPlayer } from '@rmc/game-engine';
 import {
   RECONNECT_TOKEN_PARAM,
@@ -18,12 +18,15 @@ import {
   type DrawGuessServerMessage,
   type DrawGuessSettings,
   type DrawGuessStroke,
+  type FreezeTagServerMessage,
+  type FreezeTagSettings,
   type PlayerId,
   type ServerMessage,
   type VoteChoice,
 } from '@rmc/shared-types';
 import { AccountsService } from '../accounts/accounts.service';
 import { BombTagService, RoomError as BtRoomError } from '../bomb-tag/bomb-tag.service';
+import { FreezeTagService, RoomError as FtRoomError } from '../freeze-tag/freeze-tag.service';
 import { DrawGuessService, RoomError as DgRoomError } from '../draw-guess/draw-guess.service';
 import { FriendsService } from '../friends/friends.service';
 import { MatchmakingService } from './matchmaking.service';
@@ -78,7 +81,8 @@ export function isMovementInput(raw: unknown): boolean {
     return (
       typeof parsed === 'object' &&
       parsed !== null &&
-      (parsed as { event?: unknown }).event === 'BT_INPUT'
+      ((parsed as { event?: unknown }).event === 'BT_INPUT' ||
+        (parsed as { event?: unknown }).event === 'FT_INPUT')
     );
   } catch {
     return false;
@@ -108,9 +112,13 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
   private readonly dgChatSent = new Map<string, number>();
   /** Draw & Guess: disconnected player ke wapas aane ka intezaar (RMCS jaisa hi grace time). */
   private readonly dgGraceTimers = new Map<PlayerId, NodeJS.Timeout>();
-  /** Bomb Tag: ek hi global tick-loop (continuous movement/bomb simulation), har active room ke liye. */
-  private btTickTimer: NodeJS.Timeout | null = null;
-  private btLastTickAt: number | null = null;
+  /**
+   * Ek hi global tick-loop dono real-time games (Bomb Tag + Freeze Tag) ke saare active rooms ko
+   * step karta hai. Per-game ya per-room alag timer banane ki zaroorat nahi — chahe 1 room ho ya
+   * 20, ek hi interval chalta hai.
+   */
+  private tickTimer: NodeJS.Timeout | null = null;
+  private lastTickAt: number | null = null;
   /** Bomb Tag: round-result/next-round ke liye per-room timer (RMCS/DG jaisa hi pattern). */
   private readonly btTimers = new Map<string, NodeJS.Timeout>();
   private nextSocketId = 0;
@@ -124,6 +132,7 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     private readonly friends: FriendsService,
     private readonly drawGuess: DrawGuessService,
     private readonly bombTag: BombTagService,
+    private readonly freezeTag: FreezeTagService,
   ) {
     this.rooms.onGameFinished = (game) => void this.rewardPlayers(game);
     this.rooms.onRoundStarted = (code) => this.maybeScheduleBotGuess(code);
@@ -153,21 +162,27 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
   }
 
   onModuleInit(): void {
-    // Bomb Tag: ek hi global ticker — jitne bhi rooms abhi PLAYING/COUNTDOWN me hain, sabko step
-    // karta hai. Per-room setInterval banane se zyada efficient (10 rooms ho ya 1, ek hi timer).
-    this.btLastTickAt = Date.now();
-    this.btTickTimer = setInterval(() => this.tickBombTagRooms(), BT_TICK_MS);
+    // Ek hi global ticker dono real-time games ke liye — jitne bhi rooms abhi COUNTDOWN/PLAYING
+    // me hain, sabko step karta hai.
+    this.lastTickAt = Date.now();
+    this.tickTimer = setInterval(() => this.tickRealtimeRooms(), TICK_MS);
   }
 
-  private tickBombTagRooms(): void {
+  private tickRealtimeRooms(): void {
     const now = Date.now();
-    const dtMs = this.btLastTickAt !== null ? now - this.btLastTickAt : BT_TICK_MS;
-    this.btLastTickAt = now;
+    const dtMs = this.lastTickAt !== null ? now - this.lastTickAt : TICK_MS;
+    this.lastTickAt = now;
+
     for (const code of this.bombTag.getTickableRoomCodes()) {
       const events = this.bombTag.tickRoom(code, dtMs);
       this.broadcastBtGameView(code);
       // Score sirf round-over/game-over par badalta hai — tabhi roster (BT_ROOM_STATE) bhi bhejo.
       if (events.some((e) => e.type === 'ROUND_OVER' || e.type === 'GAME_OVER')) this.broadcastBtRoom(code);
+    }
+
+    for (const code of this.freezeTag.getTickableRoomCodes()) {
+      this.freezeTag.tickRoom(code, dtMs);
+      this.broadcastFtGameView(code);
     }
   }
 
@@ -312,8 +327,8 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     for (const timer of this.dgGraceTimers.values()) clearTimeout(timer);
     this.dgGraceTimers.clear();
     this.btTimers.clear();
-    if (this.btTickTimer) clearInterval(this.btTickTimer);
-    this.btTickTimer = null;
+    if (this.tickTimer) clearInterval(this.tickTimer);
+    this.tickTimer = null;
   }
 
   handleConnection(socket: WebSocket, request?: IncomingMessage): void {
@@ -325,7 +340,8 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       known &&
       (this.rooms.getRoomCodeOf(known) ||
         this.drawGuess.getRoomCodeOf(known) ||
-        this.bombTag.getRoomCodeOf(known))
+        this.bombTag.getRoomCodeOf(known) ||
+        this.freezeTag.getRoomCodeOf(known))
     ) {
       this.restore(socket, known, token as string);
       return;
@@ -384,9 +400,17 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       this.broadcastBtRoom(btCode);
     }
 
+    // Freeze Tag: Bomb Tag jaisa hi — real-time game me lamba grace theek nahi baithta, isliye
+    // player turant round se bahar. IT tha to engine khud naya IT chun leta hai.
+    const ftCode = this.freezeTag.getRoomCodeOf(playerId);
+    if (ftCode) {
+      this.freezeTag.setConnected(playerId, false);
+      this.broadcastFtRoom(ftCode);
+    }
+
     const code = this.rooms.getRoomCodeOf(playerId);
     if (!code) {
-      if (!dgCode && !btCode) this.dropSession(playerId);
+      if (!dgCode && !btCode && !ftCode) this.dropSession(playerId);
       return;
     }
     this.rooms.setConnected(playerId, false);
@@ -799,6 +823,12 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       this.broadcastBtRoom(btCode);
     }
 
+    const ftCode = this.freezeTag.getRoomCodeOf(playerId);
+    if (ftCode) {
+      this.freezeTag.setConnected(playerId, true);
+      this.broadcastFtRoom(ftCode);
+    }
+
     const code = this.rooms.getRoomCodeOf(playerId);
     if (code) {
       this.rooms.setConnected(playerId, true);
@@ -1059,9 +1089,127 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Freeze Tag — IT chases, tag = freeze, saathi unfreeze kar sakta hai. Apna room map
+  // (FreezeTagService), wahi shared socket, wahi shared tick loop (upar `tickRealtimeRooms`).
+  // ---------------------------------------------------------------------------
+
+  @SubscribeMessage('FT_CREATE_ROOM')
+  ftCreateRoom(
+    @ConnectedSocket() socket: WebSocket,
+    @MessageBody() body: { name?: string; settings?: Partial<FreezeTagSettings> },
+  ): void {
+    this.ftHandle(socket, (id) => this.freezeTag.createRoom(id, body?.name as string, body?.settings));
+  }
+
+  @SubscribeMessage('FT_JOIN_ROOM')
+  ftJoinRoom(
+    @ConnectedSocket() socket: WebSocket,
+    @MessageBody() body: { code?: string; name?: string },
+  ): void {
+    this.ftHandle(socket, (id) => this.freezeTag.joinRoom(id, body?.code as string, body?.name as string));
+  }
+
+  @SubscribeMessage('FT_LEAVE_ROOM')
+  ftLeaveRoom(@ConnectedSocket() socket: WebSocket): void {
+    const playerId = this.playerOfSocket.get(socket);
+    if (!playerId) return;
+    const code = this.freezeTag.leaveRoom(playerId);
+    this.send(playerId, { event: 'FT_ROOM_STATE', data: null });
+    this.send(playerId, { event: 'FT_GAME_VIEW', data: null });
+    if (code) this.broadcastFtRoom(code);
+  }
+
+  @SubscribeMessage('FT_READY')
+  ftReady(@ConnectedSocket() socket: WebSocket, @MessageBody() body: { ready?: boolean }): void {
+    this.ftHandle(socket, (id) => this.freezeTag.setReady(id, Boolean(body?.ready)));
+  }
+
+  @SubscribeMessage('FT_UPDATE_SETTINGS')
+  ftUpdateSettings(
+    @ConnectedSocket() socket: WebSocket,
+    @MessageBody() body: { settings?: Partial<FreezeTagSettings> },
+  ): void {
+    this.ftHandle(socket, (id) => this.freezeTag.updateSettings(id, body?.settings ?? {}));
+  }
+
+  @SubscribeMessage('FT_KICK_PLAYER')
+  ftKickPlayer(@ConnectedSocket() socket: WebSocket, @MessageBody() body: { playerId?: string }): void {
+    this.ftGuard(socket, (id) => {
+      const { code, kickedId } = this.freezeTag.kickPlayer(id, body?.playerId as string);
+      this.send(kickedId, { event: 'FT_ROOM_STATE', data: null });
+      this.send(kickedId, { event: 'FT_GAME_VIEW', data: null });
+      this.broadcastFtRoom(code);
+    });
+  }
+
+  @SubscribeMessage('FT_START_GAME')
+  ftStartGame(@ConnectedSocket() socket: WebSocket): void {
+    this.ftHandle(socket, (id) => this.freezeTag.startGame(id));
+  }
+
+  /** Movement input — har direction-change par aata hai, isliye koi error-reporting overhead nahi. */
+  @SubscribeMessage('FT_INPUT')
+  ftInput(@ConnectedSocket() socket: WebSocket, @MessageBody() body: { x?: number; y?: number }): void {
+    const playerId = this.playerOfSocket.get(socket);
+    if (!playerId) return;
+    this.freezeTag.setInput(playerId, Number(body?.x), Number(body?.y));
+  }
+
+  @SubscribeMessage('FT_END_GAME')
+  ftEndGame(@ConnectedSocket() socket: WebSocket): void {
+    this.ftHandle(socket, (id) => this.freezeTag.forceEndGame(id));
+  }
+
+  @SubscribeMessage('FT_RETURN_TO_LOBBY')
+  ftReturnToLobby(@ConnectedSocket() socket: WebSocket): void {
+    this.ftHandle(socket, (id) => this.freezeTag.returnToLobby(id));
+  }
+
+  private ftHandle(socket: WebSocket, action: (playerId: PlayerId) => string): void {
+    this.ftGuard(socket, (playerId) => this.broadcastFtRoom(action(playerId)));
+  }
+
+  private ftGuard(socket: WebSocket, action: (playerId: PlayerId) => void): void {
+    const playerId = this.playerOfSocket.get(socket);
+    if (!playerId) return;
+    try {
+      action(playerId);
+    } catch (e) {
+      this.reportFtError(playerId, e);
+    }
+  }
+
+  private reportFtError(playerId: PlayerId, e: unknown): void {
+    if (e instanceof FtRoomError) {
+      this.send(playerId, { event: 'FT_ERROR', data: { code: e.code, message: e.message } });
+    } else {
+      console.error('Unexpected error in freeze-tag action', e);
+      this.send(playerId, { event: 'FT_ERROR', data: { code: 'BAD_MESSAGE', message: 'Kuch galat ho gaya.' } });
+    }
+  }
+
+  /** Roster (lobby list/host/ready) badla — har player ko room state + game view dono bhejo. */
+  private broadcastFtRoom(code: string): void {
+    const roomView = this.freezeTag.getRoomView(code);
+    for (const id of this.freezeTag.getPlayerIds(code)) {
+      this.send(id, { event: 'FT_ROOM_STATE', data: roomView });
+      this.send(id, { event: 'FT_GAME_VIEW', data: this.freezeTag.getGameView(code) });
+    }
+  }
+
+  /** Tick rate par sirf lean game-view — roster har frame nahi badalta. */
+  private broadcastFtGameView(code: string): void {
+    const gameView = this.freezeTag.getGameView(code);
+    if (!gameView) return;
+    for (const id of this.freezeTag.getPlayerIds(code)) {
+      this.send(id, { event: 'FT_GAME_VIEW', data: gameView });
+    }
+  }
+
   private send(
     playerId: PlayerId,
-    message: ServerMessage | DrawGuessServerMessage | BombTagServerMessage,
+    message: ServerMessage | DrawGuessServerMessage | BombTagServerMessage | FreezeTagServerMessage,
   ): void {
     const socket = this.sockets.get(playerId);
     if (socket && socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));
