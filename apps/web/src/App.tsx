@@ -23,6 +23,7 @@ import { DrawGuessApp } from './draw-guess/DrawGuessApp';
 import { ModeSelect } from './draw-guess/ModeSelect';
 import { useDrawGuessSocket } from './draw-guess/useDrawGuessSocket';
 import { BombTagApp } from './bomb-tag/BombTagApp';
+import { BEEP_START_MS, beepIntervalMs, beepSoundFor } from './bomb-tag/bombAlerts';
 import { useBombTagSocket } from './bomb-tag/useBombTagSocket';
 
 /**
@@ -67,6 +68,28 @@ export function App() {
   useEffect(() => {
     if (won) play('WIN');
   }, [won, play]);
+
+  // Bomb Tag: bomb ke aakhri 5 second me beep — jitna kam time bacha, utni tez. Sirf `bombEndsAt`
+  // aur `phase` par depend karta hai (har tick-snapshot par nahi), warna loop baar-baar restart hota.
+  const btBombEndsAt = bt.state.game?.bombEndsAt ?? null;
+  const btPhase = bt.state.game?.phase ?? null;
+  useEffect(() => {
+    if (btPhase !== 'PLAYING' || btBombEndsAt === null) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const beep = () => {
+      const remaining = btBombEndsAt - Date.now();
+      const gap = beepIntervalMs(remaining);
+      if (gap === null) return; // ya to abhi time bahut hai, ya bomb phat chuka
+      play(beepSoundFor(remaining));
+      timer = setTimeout(beep, gap);
+    };
+    // Pehli beep tabhi shuru ho jab window me aa jayein (usse pehle chup).
+    const startIn = Math.max(0, btBombEndsAt - Date.now() - BEEP_START_MS);
+    timer = setTimeout(beep, startIn);
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [btBombEndsAt, btPhase, play]);
 
   // Bomb Tag: server discrete events wire par kabhi nahi bhejta (sirf continuous snapshots) —
   // btClientState khud consecutive snapshots compare karke ye events nikaalta hai.

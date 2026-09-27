@@ -113,6 +113,27 @@ async function pressKey(code, ms) {
   await send('Input.dispatchKeyEvent', { type: 'keyUp', code, key: code });
 }
 
+/**
+ * Bot ko host ke peeche (`sign = 1`) ya ulta door (`sign = -1`) bhejta hai, server-given positions se.
+ * Paas jaane se proximity-warning trigger hoti hai; door jaana zaroori hai kyunki dono players ek
+ * doosre ke upar khade rahein to bomb baar-baar transfer hoti rehti hai aur timer kabhi ghatta hi nahi.
+ */
+async function move(bot, targetId, ms, sign = 1) {
+  const until = Date.now() + ms;
+  while (Date.now() < until) {
+    const me = bot.game?.players.find((p) => p.id === bot.id);
+    const target = bot.game?.players.find((p) => p.id === targetId);
+    if (me && target && me.alive && target.alive) {
+      const dx = (target.x - me.x) * sign;
+      const dy = (target.y - me.y) * sign;
+      const len = Math.hypot(dx, dy) || 1;
+      bot.send('BT_INPUT', { x: dx / len, y: dy / len });
+    }
+    await sleep(80);
+  }
+  bot.send('BT_INPUT', { x: 0, y: 0 });
+}
+
 try {
   await viewport(390, 844);
   await goto(WEB);
@@ -180,6 +201,45 @@ try {
   await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: joystickBox.x + 40, y: joystickBox.y, button: 'left' });
   await sleep(200);
   log('ok - virtual joystick par real pointer drag bheja gaya, koi crash nahi hua');
+
+  // ---- Enhancement 1: bomb holder ke paas aate hi warning/pulse ----
+  // Host ka player id = game view ka wo player jo kisi bot ka nahi hai.
+  const hostPlayerId = bots[0].game?.players.find((p) => !bots.some((b) => b.id === p.id))?.id ?? null;
+  if (!hostPlayerId) throw new Error('host ka playerId game view se nahi mila');
+  log(`ok - host player id mila (${hostPlayerId.slice(0, 6)}…), ab bot uske paas jaayega`);
+  // Warning tabhi aati hai jab BOMB WALA paas ho — isliye jis bot ke paas bomb hai wahi chase kare.
+  // (Bomb host ke apne paas ho to warning bina chase ke hi dikhni chahiye.)
+  const holderId = bots[0].game?.bombHolderId ?? null;
+  const chaser = bots.find((b) => b.id === holderId) ?? null;
+  if (chaser) {
+    log(`ok - bomb ${chaser.name} ke paas hai, wahi host ka peecha karega`);
+    await move(chaser, hostPlayerId, 4000, 1);
+  } else {
+    log('ok - bomb host ke apne paas hai, warning bina chase ke hi aani chahiye');
+  }
+  await waitFor(`document.querySelector('[data-testid=bt-danger-warning]')`, 'proximity/bomb warning dikhi', 6000);
+  const warningText = await evaluate(`document.querySelector('[data-testid=bt-danger-warning]').textContent`);
+  log(`ok - khatra warning dikhi: "${warningText.trim()}"`);
+  await shot('07c-bt-danger-warning');
+
+  // ---- Enhancement 2: aakhri 5 second me timer urgent (bada + red + pulse) ----
+  // Pehle chaser ko door bhejo, warna dono ke chipke rehne se bomb baar-baar transfer hoti rahegi
+  // aur timer har baar 15s par reset hota rahega (kabhi 5s tak pahunchega hi nahi).
+  if (chaser) await move(chaser, hostPlayerId, 2500, -1);
+  await waitFor(
+    `(() => { const el = document.querySelector('[data-testid=bt-bomb-timer]');
+       if (!el) return false;
+       const secs = parseInt(el.textContent.replace(/[^0-9]/g, ''), 10);
+       return Number.isFinite(secs) && secs <= 5; })()`,
+    'bomb timer aakhri 5 second me pahuncha',
+    20000,
+  );
+  const timerClass = await evaluate(`document.querySelector('[data-testid=bt-bomb-timer]').className`);
+  if (!timerClass.includes('text-red-400') || !timerClass.includes('animate-pulse')) {
+    throw new Error(`aakhri 5 second me timer urgent nahi dikha (class: ${timerClass})`);
+  }
+  log('ok - aakhri 5 second me timer red + pulse ho gaya (beep bhi isi window me tez hoti hai)');
+  await shot('07d-bt-timer-urgent');
 
   // Dono bots disconnect (koi grace time nahi) — sirf host zinda bachta hai, round turant khatam
   // hona chahiye (3-player room me sirf 1 bot disconnect karne se round khatam nahi hota, kyunki

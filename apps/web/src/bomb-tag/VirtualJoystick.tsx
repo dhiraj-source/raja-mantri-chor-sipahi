@@ -6,6 +6,13 @@ interface Props {
 
 const BASE_SIZE = 120;
 const RADIUS = BASE_SIZE / 2;
+/**
+ * Network par input bhejne ki speed. Server apna simulation 20Hz (har 50ms) par chalata hai aur
+ * har tick par sirf aakhri input padhta hai — isliye har `pointermove` (60-120/sec) par bhejna
+ * bilkul bekaar tha, aur itne messages gateway ki flood-protection tak pahunch jaate the.
+ * Stick ka visual har move par turant update hota rehta hai; sirf network send throttle hai.
+ */
+const SEND_INTERVAL_MS = 50;
 
 /** Touch-capable device hai ya nahi — sirf tabhi joystick dikhana hai (keyboard-only desktop par nahi). */
 export function isTouchDevice(): boolean {
@@ -33,23 +40,28 @@ export function clampToRadius(dx: number, dy: number, radius: number): { px: { x
 export function VirtualJoystick({ onChange }: Props) {
   const baseRef = useRef<HTMLDivElement | null>(null);
   const pointerIdRef = useRef<number | null>(null);
+  const lastSentAt = useRef(0);
   const [stick, setStick] = useState({ x: 0, y: 0 });
 
-  function updateFromPoint(clientX: number, clientY: number): void {
+  /** `force` = release/press jaisa moment, jise kabhi drop nahi karna (warna player chalta reh jaata). */
+  function updateFromPoint(clientX: number, clientY: number, force = false): void {
     const base = baseRef.current;
     if (!base) return;
     const rect = base.getBoundingClientRect();
     const cx = rect.left + rect.width / 2;
     const cy = rect.top + rect.height / 2;
     const { px, dir } = clampToRadius(clientX - cx, clientY - cy, RADIUS);
-    setStick(px);
+    setStick(px); // visual hamesha turant
+    const now = Date.now();
+    if (!force && now - lastSentAt.current < SEND_INTERVAL_MS) return;
+    lastSentAt.current = now;
     onChange(dir.x, dir.y);
   }
 
   function handlePointerDown(e: React.PointerEvent<HTMLDivElement>): void {
     e.currentTarget.setPointerCapture(e.pointerId);
     pointerIdRef.current = e.pointerId;
-    updateFromPoint(e.clientX, e.clientY);
+    updateFromPoint(e.clientX, e.clientY, true);
   }
   function handlePointerMove(e: React.PointerEvent<HTMLDivElement>): void {
     if (e.pointerId !== pointerIdRef.current) return;

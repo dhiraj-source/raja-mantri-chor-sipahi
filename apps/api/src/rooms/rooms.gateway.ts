@@ -42,12 +42,48 @@ const VOTE_DURATION_MS = Number(process.env.VOTE_DURATION_MS ?? 30_000);
  * isliye normal gameplay se zyada rakha hai.
  */
 const MAX_MESSAGES_PER_SECOND = Number(process.env.MAX_MESSAGES_PER_SECOND ?? 40);
+/**
+ * Bomb Tag ka movement input (`BT_INPUT`) real-time game ka hissa hai — turn-based modes ke
+ * chat/action messages jaisi sakht limit par ise nahi tola ja sakta. Warna tez khelne par hi
+ * (joystick drag = har pointermove, ya jaldi-jaldi keys) limit paar ho jaati thi, socket
+ * terminate ho jaata tha, aur Bomb Tag me disconnect = turant forfeit hone ki wajah se saamne
+ * wala player bina kisi elimination ke "jeet" jaata tha. Movement kabhi bhi connection nahi
+ * kaat sakta — yahi is alag (generous) limit ka maksad hai.
+ */
+const MAX_INPUT_MESSAGES_PER_SECOND = Number(process.env.MAX_INPUT_MESSAGES_PER_SECOND ?? 150);
 /** Ek message ka max size (bytes). SDP (voice signaling) 4KB se bada ho sakta hai. */
 const MAX_PAYLOAD_BYTES = Number(process.env.MAX_PAYLOAD_BYTES ?? 16_384);
+/** BT_INPUT frame itna hi chhota hota hai; isse bade frame ko parse karke check karne ki zaroorat nahi. */
+const INPUT_FRAME_MAX_BYTES = 200;
 /** Bot Mantri ka guess itni der (ms) me aata hai — insaan jaisa lagne ke liye thoda ruk kar. */
 const BOT_GUESS_DELAY_MS = Number(process.env.BOT_GUESS_DELAY_MS ?? 1800);
 /** Bomb Tag: round khatam hone ke result-screen ke baad itni der me agla round shuru. */
 const BT_ROUND_RESULT_MS = Number(process.env.BT_ROUND_RESULT_MS ?? 5_000);
+
+/**
+ * Raw frame Bomb Tag ka movement input hai ya nahi. Sirf chhote frames parse karte hain (BT_INPUT
+ * ~45 bytes ka hota hai) — bade frames (voice SDP waghera) ko bina parse kiye hi "nahi" maan lete
+ * hain, taaki har message do baar parse na ho. Kharab JSON par chup-chaap `false`.
+ */
+export function isMovementInput(raw: unknown): boolean {
+  try {
+    const text =
+      typeof raw === 'string'
+        ? raw
+        : raw instanceof Buffer || raw instanceof Uint8Array
+          ? Buffer.from(raw as Uint8Array).toString('utf8')
+          : null;
+    if (text === null || text.length > INPUT_FRAME_MAX_BYTES) return false;
+    const parsed: unknown = JSON.parse(text);
+    return (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      (parsed as { event?: unknown }).event === 'BT_INPUT'
+    );
+  } catch {
+    return false;
+  }
+}
 
 /** Har socket ek guest player hai. Reconnect: ?token=<secret> se purana player wapas milta hai. */
 @WebSocketGateway({ path: '/ws', maxPayload: MAX_PAYLOAD_BYTES })
@@ -60,6 +96,8 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
   /** Tests me fixed/chhota delay dene ke liye. */
   botGuessDelayMs = BOT_GUESS_DELAY_MS;
   private readonly limiter = new RateLimiter(MAX_MESSAGES_PER_SECOND, 1000);
+  /** Sirf `BT_INPUT` (Bomb Tag movement) ke liye alag, generous limit — dekho MAX_INPUT_MESSAGES_PER_SECOND. */
+  private readonly inputLimiter = new RateLimiter(MAX_INPUT_MESSAGES_PER_SECOND, 1000);
   /** Ek player 2 second me ek hi invite bhej sakta hai. */
   private readonly inviteLimiter = new RateLimiter(1, 2000);
   /** Draw & Guess: chat/guess spam se bachav (drawing strokes global limiter se hi cover hote hain). */
@@ -299,18 +337,26 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     this.send(playerId, { event: 'CONNECTED', data: { playerId, token: newToken } });
   }
 
-  /** Flood karne wale socket ko turant kaat do (terminate). Normal disconnect flow phir chalta hai. */
+  /**
+   * Flood karne wale socket ko turant kaat do (terminate). Normal disconnect flow phir chalta hai.
+   * Bomb Tag ka movement input apni alag (generous) limit par gina jaata hai — normal khelna
+   * kabhi connection na kaate. Baaki sab messages ki limit pehle jaisi sakht hi hai.
+   */
   private watchFlooding(socket: WebSocket): void {
     const id = `s${this.nextSocketId++}`;
     this.socketIds.set(socket, id);
-    socket.on('message', () => {
-      if (!this.limiter.allow(id)) socket.terminate();
+    socket.on('message', (raw: unknown) => {
+      const limiter = isMovementInput(raw) ? this.inputLimiter : this.limiter;
+      if (!limiter.allow(id)) socket.terminate();
     });
   }
 
   handleDisconnect(socket: WebSocket): void {
     const socketId = this.socketIds.get(socket);
-    if (socketId) this.limiter.forget(socketId);
+    if (socketId) {
+      this.limiter.forget(socketId);
+      this.inputLimiter.forget(socketId);
+    }
     const playerId = this.playerOfSocket.get(socket);
     // Agar is player ka naya socket aa chuka hai (reconnect/replace), to ye purana socket ignore.
     if (!playerId || this.sockets.get(playerId) !== socket) return;

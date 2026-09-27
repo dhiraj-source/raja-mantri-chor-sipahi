@@ -4,6 +4,7 @@ import type { BombTagGameView, BombTagRoomView, PlayerId } from '@rmc/shared-typ
 import { useI18n } from '../i18n/I18nProvider';
 import { Button, Card } from '../components/ui';
 import { Arena } from './Arena';
+import { BEEP_START_MS, isNearBombHolder } from './bombAlerts';
 import type { BtUiEvent } from './btClientState';
 import { BtScoreboard } from './BtScoreboard';
 import { useKeyboardInput } from './useKeyboardInput';
@@ -48,6 +49,10 @@ export function BtGameScreen({ room, game, myId, isHost, recentEvents, onInput, 
   const aliveCount = game.players.filter((p) => p.alive).length;
   const canMove = game.phase === 'PLAYING' && me?.alive === true;
   const [showJoystick] = useState(isTouchDevice);
+  const iHaveBomb = game.bombHolderId === myId && me?.alive === true;
+  const inDanger = isNearBombHolder(game, myId);
+  /** Aakhri 5 second: timer red + pulse (beep bhi isi window me tez hoti jaati hai). */
+  const ticking = game.bombEndsAt !== null && bombSeconds * 1000 <= BEEP_START_MS;
 
   useKeyboardInput(canMove, onInput);
 
@@ -115,7 +120,9 @@ export function BtGameScreen({ room, game, myId, isHost, recentEvents, onInput, 
                 {me?.alive === false ? t('bt.game.eliminated') : t('bt.game.aliveCount', { n: aliveCount })}
               </span>
               <span
-                className={`text-2xl font-black ${bombSeconds <= 3 ? 'animate-pulse text-red-400' : 'text-amber-300'}`}
+                className={`font-black transition-all ${
+                  ticking ? 'animate-pulse text-3xl text-red-400' : 'text-2xl text-amber-300'
+                }`}
                 data-testid="bt-bomb-timer"
               >
                 💣 {bombSeconds}s
@@ -123,6 +130,27 @@ export function BtGameScreen({ room, game, myId, isHost, recentEvents, onInput, 
             </div>
             <div className="relative">
               <Arena game={game} roster={room.players} myId={myId} />
+              {/* Khatra warning: ya to bomb mere paas hai, ya bomb-wala mere bilkul paas aa gaya. */}
+              {(iHaveBomb || inDanger) && (
+                <div
+                  aria-hidden="true"
+                  className={`pointer-events-none absolute inset-0 rounded-xl ring-4 ring-inset ${
+                    iHaveBomb ? 'animate-pulse ring-amber-400/70' : 'animate-pulse ring-red-500/70'
+                  }`}
+                />
+              )}
+              {(iHaveBomb || inDanger) && (
+                <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
+                  <span
+                    className={`animate-pulse rounded-full px-4 py-1.5 text-sm font-bold shadow-lg ${
+                      iHaveBomb ? 'bg-amber-400/90 text-stone-900' : 'bg-red-500/90 text-white'
+                    }`}
+                    data-testid="bt-danger-warning"
+                  >
+                    {iHaveBomb ? t('bt.game.warnYouHaveBomb') : t('bt.game.warnBombNear')}
+                  </span>
+                </div>
+              )}
               <AnimatePresence>
                 {banner && (
                   <motion.div

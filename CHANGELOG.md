@@ -1314,3 +1314,50 @@ None (verification only).
 - Phase 4's own remaining "nice to have" items (documented per-milestone above): no mobile haptic feedback, no movement interpolation, no chat/voice for this mode, no auto-end-early for a 1-vs-nobody match. None block real play.
 - Next: owner's call on what to build next (Draw & Guess's own remaining Milestone 5 items — accessibility pass, voice chat — or a new Phase 5, or something else entirely).
 
+# RMC-0036
+
+## Feature
+Bomb Tag critical bugfix (movement could end the round) + two gameplay enhancements (proximity danger warning, accelerating bomb beep).
+
+## Status
+COMPLETE, deployed and verified live.
+
+## What changed
+
+### The bug (owner-reported): "moving my player instantly makes the other player the winner"
+Reproduced it for real before touching anything — a 2-client script that plays a match and logs every state change. The first attempt (20 movement messages/sec) did **not** reproduce it, which was itself the clue: the engine was innocent. Sending movement at joystick speed (~100/sec) reproduced it exactly and exposed the real chain:
+
+1. Client sends `BT_INPUT` faster than the gateway's global anti-flood limit (`MAX_MESSAGES_PER_SECOND`, 40/s — a limit tuned for turn-based RMCS/Draw & Guess, where nothing legitimately sends that fast).
+2. `watchFlooding()` treats it as an attack and calls `socket.terminate()`.
+3. The socket closing is an ordinary disconnect as far as the gateway knows → `BombTagService.setConnected(id, false)`.
+4. Bomb Tag deliberately has **no reconnect grace** (RMC-0030 design decision: a ~15s bomb timer makes a 60s grace meaningless) → immediate `forfeit()` → player marked `alive: false`.
+5. One alive player left → `checkRoundOver()` → ROUND_OVER, the other player "wins".
+
+So movement never touched `alive`, scores, or round-end logic — exactly as the game rules intend. The transport layer was killing the player, and the no-grace design turned that into an instant loss. Confirmed with a captured timeline: socket closed at t=5890ms (code 1006), other player declared winner at t=5891ms, with ~14s still left on the bomb.
+
+**Fix (server, the root cause):** `BT_INPUT` now counts against its own generous limiter (`MAX_INPUT_MESSAGES_PER_SECOND`, default 150/s) instead of the strict global one — a real-time game's input can never be mistaken for an attack. Every other message keeps the existing strict limit unchanged (verified: the 100-message spam check in `smoke-ws.mjs` still terminates the connection). Frame classification (`isMovementInput`) only parses small frames (a `BT_INPUT` frame is ~45 bytes), so large payloads like voice SDP are never double-parsed, and it checks the actual `event` field — putting the text "BT_INPUT" in a chat message doesn't buy the looser limit.
+
+**Fix (client, remove the flood at source):** `VirtualJoystick` was sending on every `pointermove` (60-120/s). Since the server samples input once per 50ms tick, that was pure waste. Now throttled to one send per 50ms, while the stick's visual still follows the finger at full frame rate; press/release always send immediately so a player never keeps drifting.
+
+### Enhancements (owner-requested)
+- **Proximity danger warning/pulse**: the bomb holder now has a pulsing red danger ring drawn around them in the arena (showing roughly how close is too close), and any player who comes inside that radius gets a pulsing red border plus a "⚠️ Bomb is near you — RUN!" banner. The holder themselves gets an amber border and "💣 Pass it — run!". All derived client-side from the existing snapshot — no server or protocol change.
+- **Accelerating bomb beep**: in the last 5 seconds the bomb beeps, and the gap between beeps shrinks smoothly (~550ms at 5s down to ~110ms near zero); the last ~1.5s switches to a higher-pitched, more urgent beep. The bomb timer in the HUD also grows and turns red with a pulse over the same window (previously it only changed at ≤3s).
+- `Arena` now draws inside a `requestAnimationFrame` loop reading the latest snapshot from a ref, so pulses animate smoothly at 60fps even though snapshots arrive at 20Hz.
+
+## Reason
+Owner reported the bug with a precise expected-behavior spec and asked for a real root-cause fix rather than a UI patch, then asked for the two enhancements and a deploy.
+
+## Database / API / WebSocket
+No schema, HTTP or protocol changes. `MAX_INPUT_MESSAGES_PER_SECOND` is a new optional env var (default 150).
+
+## Tests
+- 6 new API tests (`movement-input-limit.test.ts`): frame classification (string/Buffer, other events, the "chat containing BT_INPUT" spoof attempt, oversized frames, malformed JSON), plus a direct demonstration that 100 rapid messages trip the old strict limit but pass the new input limit.
+- 10 new web tests (`bombAlerts.test.ts`): beep interval shrinks monotonically as time runs out and always stays in a sane range, urgent-pitch switchover, and the proximity check (far/near/holder-themselves/dead/wrong-phase).
+- New regression block in `smoke-bt.mjs` against a real server: 100 rapid movement messages must leave the socket OPEN, the round PLAYING, every player alive, and no winner — i.e. the exact reported bug, encoded.
+- `ui-check-bt.mjs` extended: a bot now chases the host using real server positions until the proximity warning appears in the DOM, then retreats so the bomb timer can actually run down, and the urgent timer styling is asserted at ≤5s.
+- Full suite: 464 tests pass. All three game modes' smoke suites pass against a freshly built production Docker image, and again against live production after deploy.
+
+## Known limitations
+- **Two players standing exactly on top of each other can stall a round**: the bomb bounces between them every transfer-cooldown (~400ms) and each transfer resets the bomb timer, so it never reaches zero. Found while writing the UI check (the bot parked on the host and the timer sat at 15s indefinitely). Not changed here — it's emergent from the existing tag rules and real players separate naturally — but worth revisiting if it ever shows up in real play (e.g. don't reset the full timer on every transfer, or scale the reset down).
+- The beep plays for everyone in the room, not only the bomb holder (deliberate — shared tension), and respects the existing global mute.
+

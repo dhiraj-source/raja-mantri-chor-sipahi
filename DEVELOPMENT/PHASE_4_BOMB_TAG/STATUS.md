@@ -123,3 +123,41 @@ already Milestone 2/3 me ho chuke the, isliye Milestone 4 ka poora scope yahi th
   ke liye adapt karna tha (jaisa RMC-0029 me `SKIP_GRACE_CHECK` se pehle bhi hua tha).
 - Final health check: web (Vercel) 200, API `/health` (Render) 200, teeno smoke suites live server
   ke against clean pass.
+
+## Post-launch (RMC-0036) — ek critical bug + 2 enhancements
+
+**Bug (owner ne report kiya): "move karte hi doosra player jeet jaata hai."**
+Pehle asli repro banaya (2 clients, har state change ka log). 20 msg/sec par bug nahi aaya — yahi
+sabse bada clue tha ki engine bilkul theek hai. Joystick-speed (~100 msg/sec) par turant reproduce
+ho gaya. Asli chain:
+`BT_INPUT` bahut tez → gateway ki global anti-flood limit (40/sec, jo turn-based modes ke liye
+banayi thi) paar → `socket.terminate()` → gateway ke liye ye normal disconnect hai →
+`setConnected(false)` → Bomb Tag me **koi grace nahi** (jaan-boojh kar, RMC-0030) → turant forfeit
+→ ek hi player zinda bacha → ROUND_OVER. Yaani movement ne kabhi `alive`/score/round-end ko haath
+nahi lagaya (game rules bilkul sahi the) — transport layer player ko maar raha tha.
+- **Server fix (root cause)**: `BT_INPUT` ab apni alag, generous limit (`MAX_INPUT_MESSAGES_PER_SECOND`,
+  default 150/sec) par ginta hai. Baaki har message ki sakht limit waisi hi hai (verify kiya: spam
+  wala check abhi bhi connection kaatta hai). Sirf chhote frames parse hote hain aur asli `event`
+  field check hota hai (chat me "BT_INPUT" likh dene se chhoot nahi milti).
+- **Client fix (flood source)**: `VirtualJoystick` har `pointermove` par bhej raha tha (60-120/sec);
+  server 50ms me ek hi baar padhta hai, isliye ab 50ms throttle — stick ka visual phir bhi smooth.
+
+**Enhancement 1 — bomb ke paas jaate hi warning/pulse**: bomb holder ke around pulsing red danger
+ring (arena me), paas aane wale ko red border + "⚠️ Bomb is near you — RUN!", aur khud holder ko
+amber border + "💣 Pass it — run!". Sab client-side, snapshot se derive (koi protocol change nahi).
+
+**Enhancement 2 — aakhri 5 second me tez hoti beep**: gap ~550ms (5s par) se ghat kar ~110ms
+(0 ke paas), aakhri ~1.5s me pitch bhi ooncha (panic beep). HUD ka timer bhi isi window me bada +
+red + pulse ho jaata hai. `Arena` ab `requestAnimationFrame` loop me draw karta hai taaki pulse
+60fps smooth rahe (snapshot 20Hz par hi aate hain).
+
+**Verify**: 6 + 10 naye unit tests, `smoke-bt.mjs` me bug ka seedha regression check (100 tez
+movement messages ke baad socket OPEN + PLAYING + sab alive + koi winner nahi), `ui-check-bt.mjs`
+me bot asli positions se host ka peecha karke warning trigger karta hai aur phir door jaakar timer
+ko 5s tak girne deta hai. 464 tests pass, teeno modes Docker image + live production dono par pass.
+
+**Ek nayi known limitation mili**: do players bilkul ek doosre ke upar khade rahein to bomb har
+~400ms (cooldown) par transfer hoti rehti hai aur har transfer timer reset kar deta hai — round
+kabhi khatam hi nahi hota. UI check likhte waqt dikha (bot host par park ho gaya, timer 15s par
+atka raha). Abhi change nahi kiya (existing tag-rules ka natural nateeja hai, asli players alag ho
+jaate hain), par agar real play me dikhe to transfer par poora timer reset na karna ek seedha fix hai.

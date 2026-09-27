@@ -10,7 +10,17 @@ export interface Tone {
   volume?: number;
 }
 
-export type SoundName = Reaction | 'CORRECT' | 'WRONG' | 'WIN' | 'INVITE' | 'BT_TAG' | 'BT_EXPLODE' | 'BT_ROUND_WIN';
+export type SoundName =
+  | Reaction
+  | 'CORRECT'
+  | 'WRONG'
+  | 'WIN'
+  | 'INVITE'
+  | 'BT_TAG'
+  | 'BT_EXPLODE'
+  | 'BT_ROUND_WIN'
+  | 'BT_BEEP'
+  | 'BT_BEEP_URGENT';
 
 /** Sab awaazen code me hi hain (koi audio file nahi). Har ek 1 second se chhoti. */
 export const SOUNDS: Record<SoundName, readonly Tone[]> = {
@@ -71,6 +81,10 @@ export const SOUNDS: Record<SoundName, readonly Tone[]> = {
     { freq: 660, start: 0, duration: 0.1, type: 'triangle' },
     { freq: 880, start: 0.1, duration: 0.22, type: 'triangle' },
   ],
+  /** Bomb ka countdown "beep" — aakhri 5 second me baar-baar, aur tez-tez bajta hai. */
+  BT_BEEP: [{ freq: 880, start: 0, duration: 0.06, type: 'square', volume: 0.1 }],
+  /** Aakhri ~1.5 second ka zyada tez/ooncha beep (panic wala feel). */
+  BT_BEEP_URGENT: [{ freq: 1320, start: 0, duration: 0.07, type: 'square', volume: 0.14 }],
 };
 
 /**

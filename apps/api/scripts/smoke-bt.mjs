@@ -101,6 +101,24 @@ async function main() {
   const moved = a.game.players.find((p) => p.id === a.id);
   assert(typeof moved?.x === 'number' && typeof moved?.y === 'number', 'server se taaza position mili (tick loop chal raha hai)');
 
+  // Regression (reported bug): tez movement input (joystick drag jaisa, ~100 msg/sec) pehle
+  // gateway ki flood-limit paar kar ke socket terminate kar deta tha -> Bomb Tag ka
+  // "disconnect = turant forfeit" -> saamne wala player bina kisi elimination ke jeet jaata tha.
+  // Movement ab apni alag limit par chalta hai: connection zinda rehni chahiye, koi bhi player
+  // eliminate nahi hona chahiye, aur round PLAYING me hi rehna chahiye.
+  for (let i = 0; i < 100; i++) {
+    a.send('BT_INPUT', { x: 1, y: 0.1 * (i % 5) });
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  await new Promise((r) => setTimeout(r, 300));
+  assert(a.ws.readyState === 1, 'tez movement par bhi socket OPEN rehta hai (flood-limit se nahi kata)');
+  assert(a.game?.phase === 'PLAYING', 'tez movement se round khatam nahi hota (PLAYING hi rehta hai)');
+  assert(
+    a.game.players.every((p) => p.alive),
+    'tez movement se koi player eliminate nahi hota',
+  );
+  assert(a.game.roundWinnerId === null, 'tez movement se koi winner declare nahi hota');
+
   // Disconnect = turant forfeit (Bomb Tag me RMCS/DG jaisa grace time jaan-boojh kar nahi hai).
   b.ws.close();
   await a.waitFor(() => a.game?.phase === 'ROUND_OVER', 'Bina disconnect: round turant khatam ho gaya');
