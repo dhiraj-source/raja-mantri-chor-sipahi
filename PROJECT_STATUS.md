@@ -10,7 +10,7 @@ See `DEVELOPMENT/` for the phase-tracking convention.
 - **PHASE 3 (Draw & Guess — new game mode): IN PROGRESS** — `DEVELOPMENT/PHASE_3_DRAW_AND_GUESS/STATUS.md`
 
 ## Overall Status
-**LIVE**: https://raja-mantri-chor-sipahi-five.vercel.app (verified working end-to-end in a real browser, real production API). Also still fully playable locally (2 browser tabs = 2 players, ya smoke script).
+**LIVE**: https://raja-mantri-chor-sipahi-five.vercel.app (verified working end-to-end in a real browser, real production API) — **both Raja Mantri Chor Sipahi and the new Draw & Guess mode are live**, verified against the real production server. Also still fully playable locally (2 browser tabs = 2 players, ya smoke script).
 
 ## Completed
 - RMC-0001 Memory/documentation system.
@@ -41,6 +41,7 @@ See `DEVELOPMENT/` for the phase-tracking convention.
 - RMC-0026 **Phase 3 — Draw & Guess, Milestone 3 (React UI) — now playable in a real browser**: new `apps/web/src/draw-guess/` module (mode select, home, lobby, full game screen with a real `<canvas>` — pointer-event drawing, batched/throttled stroke sync, incremental remote-stroke painting, real flood fill — toolbar, chat/guess panel, scoreboard, round/final results). One shared WebSocket carries both game modes. **Verified with a real headless-Chrome run** (`scripts/ui-check-dg.mjs`) that played a complete turn end-to-end including an actual mouse-drawn canvas stroke via Chrome DevTools Protocol, a direct wire-payload check that guessers never receive the real word, correct/incorrect guessing, and the round-results screen — which caught and fixed 2 real bugs invisible to unit tests (a hardcoded app title, and a chat panel that never showed system messages because only one of several message-producing actions ever broadcast them). 15 new unit tests; 337 tests total across the whole repo, all passing.
 - RMC-0027 **Phase 3 — Draw & Guess, Milestone 4 part 1/2: reconnection hardening**: host disconnecting (not just leaving) now transfers host immediately to another connected player; a disconnected player who doesn't reconnect within the grace period is auto-removed (same `RECONNECT_GRACE_MS` env var RMCS uses). Deliberately simpler than RMCS's vote-to-cancel system — reasoned to be sufficient for this mode's fast turn rotation, documented as intentional. 3 new unit tests + a real end-to-end smoke-test scenario (genuine WebSocket disconnects, not just LEAVE messages) run twice to confirm it isn't flaky; RMCS's own smoke test re-verified passing on the same server. 340 tests total.
 - RMC-0028 **Phase 3 — Draw & Guess, Milestone 4 part 2/2: i18n (English + Hindi)**: ~60 new `dg.*` translation keys, real Hindi (not copies), every Draw & Guess component now renders through `t()` — no hardcoded strings left. `hi`'s `Record<MessageKey, string>` type makes TypeScript itself refuse to compile if a key is ever missing from either language. **Verified in a real browser**: switched language to Hindi via headless Chrome, confirmed every visible Draw & Guess string rendered correctly (screenshot + direct text read), no layout breakage, no console errors; re-ran the full English UI check to confirm nothing regressed.
+- RMC-0029 **Deployed Phase 3 to production**: the first deploy attempt crashed Render (`Dockerfile` never copied the new `draw-guess-engine` package into the runtime image — Render safely kept the old version live instead of taking the site down). Fixed the Dockerfile, then verified with a real local Docker build+run+full-smoke-test before pushing again. Also fixed a genuine flaky race and a hang in `smoke-dg.mjs` found while doing this. **Draw & Guess is now confirmed live in production** — both the web (Vercel) and API (Render) respond, and the full smoke test passes against the real deployed server.
 
 ## In Progress
 - Kuch nahi.
@@ -92,4 +93,4 @@ None known. UI was checked in a real headless Chrome (390px phone + desktop); vo
 - (was: no commit yet — fixed, see Pending above for the push/deploy steps still left)
 
 ## Last Change
-RMC-0028 — Phase 3: Draw & Guess Milestone 4 part 2/2 — i18n (English + Hindi), verified in real browser
+RMC-0029 — Phase 3 (Draw & Guess) deployed to production; fixed a Dockerfile gap found in the process

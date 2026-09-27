@@ -1050,3 +1050,37 @@ None.
 ## Known limitations
 - Spectators, private rooms/passwords, late-joining, an accessibility pass, and voice chat integration for this mode remain open (the rest of Milestone 4, and Milestone 5).
 
+# RMC-0029
+
+## Feature
+Deploy Phase 3 (Draw & Guess) to production — fix a Dockerfile gap that broke the first attempt
+
+## Status
+COMPLETE. Draw & Guess is now live in production, verified against the real deployed server.
+
+## What changed
+- Committed and pushed RMC-0024 through RMC-0028 (all of Phase 3 so far) in one commit. The push triggered Vercel (web) and Render (API) auto-deploy as expected.
+- **Render's deploy crashed**: `Error: Cannot find module '@rmc/draw-guess-engine'` at container startup. Root cause: `apps/api/Dockerfile`'s multi-stage build copies each workspace package's `package.json` + built `dist/` into the slim runtime image individually (by design, to keep the image small) — the two existing packages (`shared-types`, `game-engine`) had their `COPY` lines, but the new `draw-guess-engine` package (which `apps/api` now depends on) was never added. The build stage succeeded (it has the whole repo); only the runtime stage was missing the package. Render correctly detected the crash and kept the previous (RMC-0023) deployment live rather than taking the site down — no downtime occurred.
+- Fixed by adding the two missing `COPY --from=build` lines for `packages/draw-guess-engine` (package.json + dist), mirroring the existing pattern exactly.
+- **Verified the fix locally before pushing again**, rather than just re-pushing and hoping: started Docker Desktop, built the production image directly (`docker build -f apps/api/Dockerfile .`), ran the container, confirmed clean startup (no MODULE_NOT_FOUND), then ran the full `smoke-dg.mjs` suite against the running container end-to-end — all checks passed.
+- Also fixed two rough edges in `smoke-dg.mjs` discovered while doing this: (1) a genuine test-script race — the drawer and guesser are separate WebSocket connections, so waiting only on the guesser's state reaching `DRAWING` before asserting on the drawer's own state was flaky (intermittently failed, including once against the real production server, which has real network latency unlike localhost); fixed by adding the same explicit per-client wait pattern already used elsewhere in the script. (2) The script never called `process.exit()` on its success path, so it would hang open after finishing instead of returning control to the shell — fixed. Also added `SKIP_GRACE_CHECK=1` so the grace-expiry scenario (which assumes a shortened `RECONNECT_GRACE_MS`, only practical for local testing) can be skipped cleanly when running against a real deployment using its default (60s) grace period.
+
+## Reason
+Owner asked to deploy Phase 3 before continuing further work. The deploy failure and fix happened within that same request — worth recording since it's a real lesson (this Dockerfile pattern needs a new pair of COPY lines every time apps/api gains a new internal package dependency, and there's no compile-time check that would catch a missed one — only a real container run does).
+
+## Database
+None.
+
+## API
+None (Dockerfile and a test script only — no application code changed in this entry).
+
+## WebSocket
+None.
+
+## Tests
+- No new automated tests (infrastructure/tooling fix). Verified via: a real local Docker build + run of the exact production image, the full `smoke-dg.mjs` suite run against that local container, then re-run again against the actual live production server after deploying (twice — once to catch the pre-existing test race, once after fixing it) — both confirmed all checks pass with zero flakiness once the script fix was in.
+- Confirmed both the live web (Vercel) and live API (Render `/health`) respond `200` after the deploy.
+
+## Known limitations
+- None new. Phase 3's existing known limitations (see RMC-0024 through RMC-0028 entries above) are unchanged — this entry is purely about getting the already-built feature safely into production.
+
