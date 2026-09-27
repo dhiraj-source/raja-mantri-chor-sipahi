@@ -25,6 +25,8 @@ import { useDrawGuessSocket } from './draw-guess/useDrawGuessSocket';
 import { BombTagApp } from './bomb-tag/BombTagApp';
 import { BEEP_START_MS, beepIntervalMs, beepSoundFor } from './bomb-tag/bombAlerts';
 import { useBombTagSocket } from './bomb-tag/useBombTagSocket';
+import { FreezeTagApp } from './freeze-tag/FreezeTagApp';
+import { useFreezeTagSocket } from './freeze-tag/useFreezeTagSocket';
 
 /**
  * Browser sirf dikhata hai aur actions bhejta hai.
@@ -39,7 +41,8 @@ export function App() {
   // taaki reload/reconnect ke baad turant sahi room dikhe — "mode" select ka intezaar na karna pade).
   const dg = useDrawGuessSocket(onRawMessage, send);
   const bt = useBombTagSocket(onRawMessage, send);
-  const [mode, setMode] = useState<'menu' | 'rmcs' | 'draw_guess' | 'bomb_tag'>('menu');
+  const ft = useFreezeTagSocket(onRawMessage, send);
+  const [mode, setMode] = useState<'menu' | 'rmcs' | 'draw_guess' | 'bomb_tag' | 'freeze_tag'>('menu');
   const auth = useAuth();
   const { authToken, refresh } = auth;
   const friends = useFriends(authToken, friendsVersion);
@@ -136,7 +139,7 @@ export function App() {
   });
 
   let screen;
-  if (connection === 'connecting' || (reconnecting && !room && !dg.state.room && !bt.state.room)) {
+  if (connection === 'connecting' || (reconnecting && !room && !dg.state.room && !bt.state.room && !ft.state.room)) {
     screen = (
       <p className="animate-pulse text-center text-stone-300">
         {reconnecting ? t('app.reconnecting') : t('app.connecting')}
@@ -171,6 +174,18 @@ export function App() {
         defaultName={auth.profile?.displayName}
         send={bt.send}
         dismissError={bt.dismissError}
+        onBackToModeSelect={() => setMode('menu')}
+      />
+    );
+  } else if (ft.state.room) {
+    // Reload/reconnect par server hi batata hai ki ye Freeze Tag room me hai.
+    screen = (
+      <FreezeTagApp
+        state={ft.state}
+        playerId={playerId}
+        defaultName={auth.profile?.displayName}
+        send={ft.send}
+        dismissError={ft.dismissError}
         onBackToModeSelect={() => setMode('menu')}
       />
     );
@@ -233,12 +248,24 @@ export function App() {
         onBackToModeSelect={() => setMode('menu')}
       />
     );
+  } else if (mode === 'freeze_tag') {
+    screen = (
+      <FreezeTagApp
+        state={ft.state}
+        playerId={playerId}
+        defaultName={auth.profile?.displayName}
+        send={ft.send}
+        dismissError={ft.dismissError}
+        onBackToModeSelect={() => setMode('menu')}
+      />
+    );
   } else if (mode === 'menu') {
     screen = (
       <ModeSelect
         onChooseRmcs={() => setMode('rmcs')}
         onChooseDrawGuess={() => setMode('draw_guess')}
         onChooseBombTag={() => setMode('bomb_tag')}
+        onChooseFreezeTag={() => setMode('freeze_tag')}
       />
     );
   } else {
@@ -300,13 +327,23 @@ export function App() {
   // jagah chahiye — sirf usi waqt container wide hota hai, baaki sab jagah waisa hi mobile-first rehta hai.
   const inDrawGuess = dg.state.room !== null || mode === 'draw_guess';
   const inBombTag = bt.state.room !== null || mode === 'bomb_tag';
-  const wide = (inDrawGuess && dg.state.game !== null) || (inBombTag && bt.state.game !== null);
+  const inFreezeTag = ft.state.room !== null || mode === 'freeze_tag';
+  const wide =
+    (inDrawGuess && dg.state.game !== null) ||
+    (inBombTag && bt.state.game !== null) ||
+    (inFreezeTag && ft.state.game !== null);
 
   return (
     <main className={`mx-auto min-h-screen w-full px-4 py-6 pb-24 ${wide ? 'max-w-4xl' : 'max-w-md'}`}>
       <LanguageSwitch muted={sounds.muted} onToggleMute={sounds.toggleMuted} />
       <h1 className="mb-6 mt-2 text-center text-3xl font-black text-amber-300">
-        {inDrawGuess ? `🎨 ${t('dg.appTitle')}` : inBombTag ? `💣 ${t('bt.appTitle')}` : `👑 ${t('app.title')}`}
+        {inDrawGuess
+          ? `🎨 ${t('dg.appTitle')}`
+          : inBombTag
+            ? `💣 ${t('bt.appTitle')}`
+            : inFreezeTag
+              ? `🧊 ${t('ft.appTitle')}`
+              : `👑 ${t('app.title')}`}
       </h1>
       {reconnecting && room && (
         <div role="status" className="mb-4 rounded-xl bg-amber-500/80 px-4 py-3 text-sm text-stone-900">

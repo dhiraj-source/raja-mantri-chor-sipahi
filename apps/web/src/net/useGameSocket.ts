@@ -2,7 +2,9 @@ import { useCallback, useEffect, useReducer, useRef } from 'react';
 import {
   RECONNECT_TOKEN_PARAM,
   type BombTagClientMessage,
+  type FreezeTagClientMessage,
   type BombTagServerMessage,
+  type FreezeTagServerMessage,
   type ClientMessage,
   type DrawGuessClientMessage,
   type DrawGuessServerMessage,
@@ -47,7 +49,7 @@ export function useGameSocket() {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Kuch messages (voice signaling) reducer/state me nahi jaate, seedha yahan se sunte hain —
   // taaki har ICE candidate par poora app re-render na ho.
-  const rawListenersRef = useRef(new Set<(message: ServerMessage | DrawGuessServerMessage | BombTagServerMessage) => void>());
+  const rawListenersRef = useRef(new Set<(message: ServerMessage | DrawGuessServerMessage | BombTagServerMessage | FreezeTagServerMessage) => void>());
   // Purane socket ke late events ko ignore karne ke liye.
   const attemptIdRef = useRef(0);
   const retriesRef = useRef(0);
@@ -106,7 +108,7 @@ export function useGameSocket() {
 
   // Ek hi socket teeno game modes serve karta hai (koi doosra connection nahi) — isliye send()
   // saare message-universes accept karta hai; server hi decide karta hai kaunsa event kis mode ka hai.
-  const send = useCallback((message: ClientMessage | DrawGuessClientMessage | BombTagClientMessage) => {
+  const send = useCallback((message: ClientMessage | DrawGuessClientMessage | BombTagClientMessage | FreezeTagClientMessage) => {
     const socket = socketRef.current;
     if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
   }, []);
@@ -117,7 +119,7 @@ export function useGameSocket() {
   const dismissInvite = useCallback((key: number) => dispatch({ type: 'DISMISS_INVITE', key }), []);
 
   /** Listener register karo (VOICE_SIGNAL jaisi cheezein). Cleanup function wapas milta hai. */
-  const onRawMessage = useCallback((listener: (message: ServerMessage | DrawGuessServerMessage | BombTagServerMessage) => void) => {
+  const onRawMessage = useCallback((listener: (message: ServerMessage | DrawGuessServerMessage | BombTagServerMessage | FreezeTagServerMessage) => void) => {
     rawListenersRef.current.add(listener);
     return () => rawListenersRef.current.delete(listener);
   }, []);

@@ -1,5 +1,6 @@
 import type {
   BombTagServerMessage,
+  FreezeTagServerMessage,
   DrawGuessServerMessage,
   GameReward,
   PlayerGameView,
@@ -77,7 +78,7 @@ export type ClientEvent =
   | { type: 'DISMISS_ERROR' }
   | { type: 'EXPIRE_REACTION'; key: number }
   | { type: 'DISMISS_INVITE'; key: number }
-  | { type: 'SERVER'; message: ServerMessage | DrawGuessServerMessage | BombTagServerMessage };
+  | { type: 'SERVER'; message: ServerMessage | DrawGuessServerMessage | BombTagServerMessage | FreezeTagServerMessage };
 
 export function clientReducer(state: ClientState, event: ClientEvent): ClientState {
   switch (event.type) {
@@ -174,7 +175,7 @@ export function clientReducer(state: ClientState, event: ClientEvent): ClientSta
  * yahin se guzarte hain (clientReducer unhe chhoo tak nahi, `default` case me ignore ho jaate
  * hain — dgReducer/btReducer alag se inhe sunte hain `onRawMessage` ke zariye).
  */
-export function parseServerMessage(raw: string): ServerMessage | DrawGuessServerMessage | BombTagServerMessage | null {
+export function parseServerMessage(raw: string): ServerMessage | DrawGuessServerMessage | BombTagServerMessage | FreezeTagServerMessage | null {
   try {
     const parsed: unknown = JSON.parse(raw);
     if (
@@ -182,7 +183,7 @@ export function parseServerMessage(raw: string): ServerMessage | DrawGuessServer
       parsed !== null &&
       typeof (parsed as { event?: unknown }).event === 'string'
     ) {
-      return parsed as ServerMessage | DrawGuessServerMessage | BombTagServerMessage;
+      return parsed as ServerMessage | DrawGuessServerMessage | BombTagServerMessage | FreezeTagServerMessage;
     }
   } catch {
     // ignore

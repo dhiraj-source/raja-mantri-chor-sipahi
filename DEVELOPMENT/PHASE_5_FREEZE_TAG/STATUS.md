@@ -51,7 +51,7 @@ teeno **bilkul nahi todhne** hain.
 | 0 | `@rmc/arena-kit` extract (geometry/movement/random) + Bomb Tag usi par shift + poora re-verify | ☑ DONE | RMC-0037 |
 | 1 | Foundation: pure `freeze-tag-engine` (IT selection, freeze/unfreeze, timer, win conditions, stats) + shared-types wire protocol | ☑ DONE | RMC-0037 |
 | 2 | Server core: NestJS module + shared tick-loop/gateway wiring, disconnect/reconnect | ☑ DONE | RMC-0038 |
-| 3 | React UI: arena canvas (IT/active/frozen visuals), HUD, lobby/menu integration, result screen | ☐ TODO | — |
+| 3 | React UI: arena canvas (IT/active/frozen visuals), HUD, lobby/menu integration, result screen | ☑ DONE | RMC-0039 |
 | 4 | Polish: sounds (tag/freeze/unfreeze/countdown/win/lose), effects, mobile joystick, i18n | ☐ TODO | — |
 | — | *(deploy + verify live, jaisa Phase 4 me hua)* | ☐ TODO | — |
 

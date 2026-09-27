@@ -2,6 +2,7 @@ import { useCallback, useEffect, useReducer } from 'react';
 import type {
   BombTagClientMessage,
   BombTagServerMessage,
+  FreezeTagServerMessage,
   DrawGuessServerMessage,
   ServerMessage,
 } from '@rmc/shared-types';
@@ -12,7 +13,7 @@ import { btReducer, initialBtState, isBtMessage } from './btClientState';
  * socket connection wahi ek hi hai — `onRawMessage` se sirf BT_* messages sunta hai.
  */
 export function useBombTagSocket(
-  onRawMessage: (listener: (message: ServerMessage | DrawGuessServerMessage | BombTagServerMessage) => void) => () => void,
+  onRawMessage: (listener: (message: ServerMessage | DrawGuessServerMessage | BombTagServerMessage | FreezeTagServerMessage) => void) => () => void,
   rawSend: (message: BombTagClientMessage) => void,
 ) {
   const [state, dispatch] = useReducer(btReducer, initialBtState);
