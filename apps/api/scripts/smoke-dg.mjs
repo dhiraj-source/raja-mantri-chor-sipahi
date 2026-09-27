@@ -88,6 +88,10 @@ async function main() {
 
   const word = drawer.game.wordChoices[0];
   drawer.send('DG_SELECT_WORD', { word });
+  // drawer aur guesser alag WebSocket connections hain — dono ka apna message alag time par
+  // pahunchta hai, isliye dono ka apna wait zaroori hai (sirf ek ka wait karke doosre ka state
+  // check karna race condition hai, jaisa yahan pehle ek baar dikha bhi).
+  await drawer.waitFor(() => drawer.game?.phase === 'DRAWING', 'drawer ke socket par bhi DRAWING pahunchi');
   await guesser.waitFor(() => guesser.game?.phase === 'DRAWING', 'DRAWING shuru hui');
   assert(guesser.game.word === null, 'guesser ko asli word kabhi nahi mila');
   assert(drawer.game.word === word, 'drawer ko apna word dikhta hai');
@@ -113,7 +117,9 @@ async function main() {
 
   // ---- Disconnect handling: host disconnect -> turant naya host; grace expire -> seat khali ----
   // Naya, alag room (lobby-only, koi game nahi) — taaki JOIN_ROOM "GAME_IN_PROGRESS" na de.
-  // (RECONNECT_GRACE_MS chhota set karke chalao, jaisa RMCS ke smoke test me hota hai.)
+  // Server ka RECONNECT_GRACE_MS chhota (jaise 1500) set karke chalao taaki ye jaldi check ho —
+  // production (default 60s grace) ke against SKIP_GRACE_CHECK=1 se is hisse ko skip kar sakte ho.
+  const graceWaitMs = Number(process.env.GRACE_WAIT_MS ?? 5000);
   const h = new Client('Host2');
   const g1 = new Client('G1');
   const g2 = new Client('G2');
@@ -133,13 +139,18 @@ async function main() {
 
   const newHostClient = newHostId === g1.id ? g1 : g2;
   const otherClient = newHostId === g1.id ? g2 : g1;
-  newHostClient.ws.close(); // naya host bhi disconnect (grace expire hone dete hain)
-  await otherClient.waitFor(
-    () => !otherClient.room?.players.some((p) => p.id === newHostId),
-    'grace time khatam: disconnected host ki seat khali ho gayi',
-    5000,
-  );
-  assert(otherClient.room.players.length === 1, 'sirf ek hi connected player bacha room me');
+  if (process.env.SKIP_GRACE_CHECK === '1') {
+    console.log('skipped - grace-expiry check (SKIP_GRACE_CHECK=1, server ka grace time lamba hai)');
+    newHostClient.ws.close();
+  } else {
+    newHostClient.ws.close(); // naya host bhi disconnect (grace expire hone dete hain)
+    await otherClient.waitFor(
+      () => !otherClient.room?.players.some((p) => p.id === newHostId),
+      'grace time khatam: disconnected host ki seat khali ho gayi',
+      graceWaitMs,
+    );
+    assert(otherClient.room.players.length === 1, 'sirf ek hi connected player bacha room me');
+  }
 
   otherClient.ws.close();
 
@@ -148,6 +159,7 @@ async function main() {
     process.exit(1);
   }
   console.log('\nAll Draw & Guess smoke checks passed.');
+  process.exit(0);
 }
 
 main().catch((e) => {
