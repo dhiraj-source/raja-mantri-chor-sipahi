@@ -6,6 +6,7 @@ dist/
 coverage/
 ui-screenshots/
 ui-screenshots-dg/
+ui-screenshots-bt/
 .vite/
 *.log
 

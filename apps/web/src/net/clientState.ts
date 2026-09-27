@@ -1,4 +1,5 @@
 import type {
+  BombTagServerMessage,
   DrawGuessServerMessage,
   GameReward,
   PlayerGameView,
@@ -76,7 +77,7 @@ export type ClientEvent =
   | { type: 'DISMISS_ERROR' }
   | { type: 'EXPIRE_REACTION'; key: number }
   | { type: 'DISMISS_INVITE'; key: number }
-  | { type: 'SERVER'; message: ServerMessage | DrawGuessServerMessage };
+  | { type: 'SERVER'; message: ServerMessage | DrawGuessServerMessage | BombTagServerMessage };
 
 export function clientReducer(state: ClientState, event: ClientEvent): ClientState {
   switch (event.type) {
@@ -169,11 +170,11 @@ export function clientReducer(state: ClientState, event: ClientEvent): ClientSta
 
 /**
  * Raw text ko safely ServerMessage me badalta hai; kharab data par null.
- * Ek hi socket dono game modes serve karta hai, isliye DG_* messages bhi yahin se guzarte hain
- * (clientReducer unhe chhoo tak nahi, `default` case me ignore ho jaate hain — dgReducer alag se
- * inhe sunta hai `onRawMessage` ke zariye).
+ * Ek hi socket teeno game modes serve karta hai, isliye DG_ aur BT_ prefix wale messages bhi
+ * yahin se guzarte hain (clientReducer unhe chhoo tak nahi, `default` case me ignore ho jaate
+ * hain — dgReducer/btReducer alag se inhe sunte hain `onRawMessage` ke zariye).
  */
-export function parseServerMessage(raw: string): ServerMessage | DrawGuessServerMessage | null {
+export function parseServerMessage(raw: string): ServerMessage | DrawGuessServerMessage | BombTagServerMessage | null {
   try {
     const parsed: unknown = JSON.parse(raw);
     if (
@@ -181,7 +182,7 @@ export function parseServerMessage(raw: string): ServerMessage | DrawGuessServer
       parsed !== null &&
       typeof (parsed as { event?: unknown }).event === 'string'
     ) {
-      return parsed as ServerMessage | DrawGuessServerMessage;
+      return parsed as ServerMessage | DrawGuessServerMessage | BombTagServerMessage;
     }
   } catch {
     // ignore

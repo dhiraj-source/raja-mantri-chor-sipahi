@@ -22,6 +22,8 @@ import { useVoiceChat } from './voice/useVoiceChat';
 import { DrawGuessApp } from './draw-guess/DrawGuessApp';
 import { ModeSelect } from './draw-guess/ModeSelect';
 import { useDrawGuessSocket } from './draw-guess/useDrawGuessSocket';
+import { BombTagApp } from './bomb-tag/BombTagApp';
+import { useBombTagSocket } from './bomb-tag/useBombTagSocket';
 
 /**
  * Browser sirf dikhata hai aur actions bhejta hai.
@@ -32,10 +34,11 @@ export function App() {
   const { state, send, reconnect, dismissError, expireReaction, dismissInvite, onRawMessage } = useGameSocket();
   const { room, game, queue, playerId, connection, error, reactions, reward, invites, friendsVersion } = state;
   const reconnecting = connection === 'reconnecting';
-  // Draw & Guess: RMCS se bilkul alag state/screens, same shared socket (mounted yahin taaki
-  // reload/reconnect ke baad turant sahi room dikhe — "mode" select ka intezaar na karna pade).
+  // Draw & Guess / Bomb Tag: RMCS se bilkul alag state/screens, same shared socket (mounted yahin
+  // taaki reload/reconnect ke baad turant sahi room dikhe — "mode" select ka intezaar na karna pade).
   const dg = useDrawGuessSocket(onRawMessage, send);
-  const [mode, setMode] = useState<'menu' | 'rmcs' | 'draw_guess'>('menu');
+  const bt = useBombTagSocket(onRawMessage, send);
+  const [mode, setMode] = useState<'menu' | 'rmcs' | 'draw_guess' | 'bomb_tag'>('menu');
   const auth = useAuth();
   const { authToken, refresh } = auth;
   const friends = useFriends(authToken, friendsVersion);
@@ -64,6 +67,20 @@ export function App() {
   useEffect(() => {
     if (won) play('WIN');
   }, [won, play]);
+
+  // Bomb Tag: server discrete events wire par kabhi nahi bhejta (sirf continuous snapshots) —
+  // btClientState khud consecutive snapshots compare karke ye events nikaalta hai.
+  const heardBtEvent = useRef(-1);
+  useEffect(() => {
+    for (const event of bt.state.recentEvents) {
+      if (event.key <= heardBtEvent.current) continue;
+      heardBtEvent.current = event.key;
+      if (event.type === 'TAG') play('BT_TAG');
+      else if (event.type === 'EXPLODE') play('BT_EXPLODE');
+      else if (event.type === 'ROUND_WIN') play('BT_ROUND_WIN');
+      else if (event.type === 'MATCH_WIN') play('WIN'); // WIN ki apni "Victory!" voice-line bhi hai
+    }
+  }, [bt.state.recentEvents, play]);
 
   const inviteCount = invites.length;
   const heardInvites = useRef(0);
@@ -96,7 +113,7 @@ export function App() {
   });
 
   let screen;
-  if (connection === 'connecting' || (reconnecting && !room && !dg.state.room)) {
+  if (connection === 'connecting' || (reconnecting && !room && !dg.state.room && !bt.state.room)) {
     screen = (
       <p className="animate-pulse text-center text-stone-300">
         {reconnecting ? t('app.reconnecting') : t('app.connecting')}
@@ -119,6 +136,18 @@ export function App() {
         defaultName={auth.profile?.displayName}
         send={dg.send}
         dismissError={dg.dismissError}
+        onBackToModeSelect={() => setMode('menu')}
+      />
+    );
+  } else if (bt.state.room) {
+    // Bomb Tag ke liye bhi wahi reload/reconnect guarantee jaisa Draw & Guess ke liye hai.
+    screen = (
+      <BombTagApp
+        state={bt.state}
+        playerId={playerId}
+        defaultName={auth.profile?.displayName}
+        send={bt.send}
+        dismissError={bt.dismissError}
         onBackToModeSelect={() => setMode('menu')}
       />
     );
@@ -170,9 +199,24 @@ export function App() {
         onBackToModeSelect={() => setMode('menu')}
       />
     );
+  } else if (mode === 'bomb_tag') {
+    screen = (
+      <BombTagApp
+        state={bt.state}
+        playerId={playerId}
+        defaultName={auth.profile?.displayName}
+        send={bt.send}
+        dismissError={bt.dismissError}
+        onBackToModeSelect={() => setMode('menu')}
+      />
+    );
   } else if (mode === 'menu') {
     screen = (
-      <ModeSelect onChooseRmcs={() => setMode('rmcs')} onChooseDrawGuess={() => setMode('draw_guess')} />
+      <ModeSelect
+        onChooseRmcs={() => setMode('rmcs')}
+        onChooseDrawGuess={() => setMode('draw_guess')}
+        onChooseBombTag={() => setMode('bomb_tag')}
+      />
     );
   } else {
     screen = (
@@ -229,16 +273,17 @@ export function App() {
     );
   }
 
-  // Draw & Guess ke actual game (canvas) screen ko RMCS ke narrow mobile-card se zyada jagah
-  // chahiye — sirf usi waqt container wide hota hai, baaki sab jagah waisa hi mobile-first rehta hai.
+  // Draw & Guess/Bomb Tag ke actual game (canvas) screen ko RMCS ke narrow mobile-card se zyada
+  // jagah chahiye — sirf usi waqt container wide hota hai, baaki sab jagah waisa hi mobile-first rehta hai.
   const inDrawGuess = dg.state.room !== null || mode === 'draw_guess';
-  const wide = inDrawGuess && dg.state.game !== null;
+  const inBombTag = bt.state.room !== null || mode === 'bomb_tag';
+  const wide = (inDrawGuess && dg.state.game !== null) || (inBombTag && bt.state.game !== null);
 
   return (
     <main className={`mx-auto min-h-screen w-full px-4 py-6 pb-24 ${wide ? 'max-w-4xl' : 'max-w-md'}`}>
       <LanguageSwitch muted={sounds.muted} onToggleMute={sounds.toggleMuted} />
       <h1 className="mb-6 mt-2 text-center text-3xl font-black text-amber-300">
-        {inDrawGuess ? `🎨 ${t('dg.appTitle')}` : `👑 ${t('app.title')}`}
+        {inDrawGuess ? `🎨 ${t('dg.appTitle')}` : inBombTag ? `💣 ${t('bt.appTitle')}` : `👑 ${t('app.title')}`}
       </h1>
       {reconnecting && room && (
         <div role="status" className="mb-4 rounded-xl bg-amber-500/80 px-4 py-3 text-sm text-stone-900">

@@ -110,7 +110,7 @@ apps/api/src/rooms:
 
 - Split hosting: web (static build) on **Vercel**; api (persistent Node process, WebSocket, in-memory room/session state) on **Render**. Vercel's serverless model cannot run the api as-is — this was a deliberate, discussed decision, not an oversight. (Railway was the original choice but its free trial had expired on the owner's account; Render was picked instead.)
 - apps/api/Dockerfile: multi-stage, monorepo-aware (build context = repo root, not apps/api). Copies the whole repo so package-lock.json stays valid for `npm ci`, builds shared-types + game-engine + draw-guess-engine + api, prunes devDependencies, then a slim runtime stage copies only node_modules + each internal package's `package.json`+`dist` (one `COPY --from=build` pair per package, listed individually — not a wildcard) + the api's own dist + migrations. Render's `rmc-api` service builds from this Dockerfile (path `apps/api/Dockerfile`, context `.`) — the CLI's `services create` doesn't expose separate dockerfile-path/context flags, so this was set via a direct PATCH to Render's REST API (`serviceDetails.envSpecificDetails`).
-  **Operational lesson (RMC-0029):** because each package needs its own explicit `COPY` pair, adding a new internal `@rmc/*` package that `apps/api` depends on (as `draw-guess-engine` was) requires also adding its `COPY` lines here — nothing catches a missed one at compile time, only an actual container run does. The first Phase 3 deploy crashed Render this exact way (`Cannot find module '@rmc/draw-guess-engine'`) before this was caught and fixed; Render safely kept the previous deployment live rather than taking the site down. Verify any Dockerfile change to this file with a real local `docker build` + `docker run` + smoke test before pushing, not just by re-reading it.
+  **Operational lesson (RMC-0029):** because each package needs its own explicit `COPY` pair, adding a new internal `@rmc/*` package that `apps/api` depends on (as `draw-guess-engine` was) requires also adding its `COPY` lines here — nothing catches a missed one at compile time, only an actual container run does. The first Phase 3 deploy crashed Render this exact way (`Cannot find module '@rmc/draw-guess-engine'`) before this was caught and fixed; Render safely kept the previous deployment live rather than taking the site down. Verify any Dockerfile change to this file with a real local `docker build` + `docker run` + smoke test before pushing, not just by re-reading it. **This exact gap recurred for `bomb-tag-engine` (RMC-0034)** — caught this time *before* pushing (not after a crash) by following this same lesson proactively; fixed and verified with a real container run of all three game modes' smoke tests before deploying.
 - vercel.json (repo root) drives the web build directly (installCommand/buildCommand/outputDirectory) so no Vercel dashboard "Root Directory" configuration is needed for the monorepo.
 - CORS (cors.ts, RMC-0016) is the production gate: the deployed web origin must be in `CORS_ORIGINS` on Render or the browser gets blocked. Currently set to the live Vercel URL.
 - `.github/workflows/ci.yml` runs build+lint+test on every push as a safety net; actual deployment is triggered by Render's and Vercel's own GitHub App integration (git push -> auto deploy), not by this workflow.
@@ -321,6 +321,86 @@ A Skribbl.io-inspired drawing-and-guessing mode, built **alongside** RMCS, never
   every visible string renders correctly with no layout breakage.
 - Still open (rest of Milestone 4, and Milestone 5): spectators, private rooms/passwords, an
   accessibility pass, and voice chat integration for this mode.
+
+## Bomb Tag — new game mode, Phase 4 (RMC-0030-0034, all 5 milestones done)
+
+A fast, real-time multiplayer arena mode, built **alongside** RMCS and Draw & Guess, never replacing either.
+
+- `packages/bomb-tag-engine`: brand-new pure package, sibling to `game-engine`/`draw-guess-engine`
+  (same ESLint-enforced purity rule). No hidden information in this game (unlike RMCS's secret
+  roles or Draw & Guess's secret word) — everyone sees everyone's position, so there is a single
+  shared view (`getGameView`), not a per-viewer-masked one.
+- **First continuous tick loop in this codebase.** RMCS and Draw & Guess are both turn-based/
+  event-driven; Bomb Tag needs continuous player movement, so `RoomsGateway` now also runs one
+  global `setInterval(BT_TICK_MS = 50)` (`onModuleInit`/`tickBombTagRooms`) that steps every room
+  currently in `COUNTDOWN`/`PLAYING` — a single shared timer for all active rooms, not one per
+  room, so the cost doesn't grow per room.
+- Wire protocol is split in two, on purpose: `BombTagRoomView` (roster — names/colors/host/ready/
+  score) only changes on discrete lobby/round events, while `BombTagGameView` (phase/bomb/
+  positions/alive) is lean and sent every tick — avoids re-sending static roster data at tick rate.
+- `apps/api/src/bomb-tag/bomb-tag.service.ts`: its own in-memory room map, independent of RMCS's
+  and Draw & Guess's. `BT_*` `@SubscribeMessage` handlers live in the **same shared `RoomsGateway`**
+  (no second socket/gateway — this project has an explicit standing decision never to spin up a
+  second one), following the same `dgHandle`/`dgGuard`-style guard/broadcast pattern already used
+  for Draw & Guess.
+- **Disconnect handling deliberately has no grace period** (unlike RMCS's 60s grace or Draw &
+  Guess's grace-then-remove): a ~15s bomb timer makes a long grace meaningless, so
+  `handleDisconnect` calls `BombTagService.setConnected(id, false)` immediately, forfeiting the
+  player mid-round if a game is active. Round-result → next-round still uses a per-room
+  `setTimeout` (`BT_ROUND_RESULT_MS`, default 5s), the same shape as RMCS's/DG's own timers.
+- **Two real bugs found only by live-server verification (RMC-0031), worth remembering the shape
+  of for future modes with an active-game "player leaves/disconnects" path:**
+  1. Any code path that calls the engine's `forfeit()` (or `tick()`) **must** forward the returned
+     `events` to the gateway's `onRoundOver`/`onGameOver` hooks — `setConnected` and `leaveRoom`
+     originally discarded them, so a round ending via disconnect left the *state* correct
+     (clients saw `ROUND_OVER`) but never armed the next-round timer, silently stalling the match
+     forever. Fixed via a shared `notifyEvents()` helper used everywhere `forfeit()`/`tick()` is
+     called.
+  2. The engine's `startNextRound` revives its entire fixed `playerOrder` as `alive: true` every
+     round (the roster never shrinks mid-match, by design). A player who fully left the room, or
+     who disconnected and never reconnected, would therefore come back as an uncontrollable
+     "ghost" every subsequent round unless the **service** re-applies `forfeit()` to them right
+     after the engine starts the new round — the engine itself has no concept of "left" or
+     "disconnected" (that's a service/session concern, kept out of the pure engine on purpose).
+     `BombTagService.startNextRound` now does this: re-forfeits anyone no longer in `room.players`
+     or still in the `disconnected` set, immediately after calling the engine's `startNextRound`.
+- Verified end-to-end: `apps/api/scripts/smoke-bt.mjs` runs real WebSocket clients through a full
+  match (lobby → countdown → playing → movement input → disconnect-forfeit → round-over →
+  automatic next round → cascading match-end) plus a same-token reconnect scenario mid-round.
+  This script is what caught both bugs above.
+
+- **React UI (RMC-0032, Milestone 3) — playable in a real browser:**
+  - `apps/web/src/bomb-tag/` mirrors Draw & Guess's file-per-concern shape exactly: reducer +
+    socket hook, an app-level screen switcher, home/lobby/game screens, and a canvas renderer.
+  - `Arena.tsx` redraws fully on every new tick snapshot (~20fps) rather than interpolating —
+    simplest correct approach for a first pass; revisit only if movement looks choppy in
+    practice. Canvas dimensions come from the server's own `arenaWidth`/`arenaHeight`/
+    `playerRadius` fields, never hardcoded on the client.
+  - `useKeyboardInput.ts` sends `BT_INPUT` only when the combined WASD/arrow-key direction
+    changes (not every frame) — the server already clamps/normalizes, so the client does no
+    diagonal-movement math of its own. The direction computation is a small pure function
+    (`computeDirection`) pulled out specifically so it's unit-testable without a DOM test
+    harness (this project has no `@testing-library/react`; pure-function extraction is the
+    established way to keep hook logic testable).
+  - Same 3-way widening pattern Draw & Guess established in Phase 3: `useGameSocket`'s
+    `send`/`onRawMessage`, `clientState.ts`'s `parseServerMessage`, and `useVoiceChat`'s listener
+    type all now accept `ServerMessage | DrawGuessServerMessage | BombTagServerMessage`.
+  - Verified with real headless Chrome (`scripts/ui-check-bt.mjs`), including **real keyboard
+    input via Chrome DevTools Protocol** (`Input.dispatchKeyEvent`, not a synthetic DOM event) —
+    confirmed the player's on-screen position actually changed. Checked in English and Hindi.
+  - `VirtualJoystick.tsx` (Milestone 4, RMC-0033): Pointer-Events-based on-screen joystick, shown
+    only on touch-capable devices (`isTouchDevice()`), sends the exact same `onInput` callback the
+    keyboard hook uses — the server just remembers whichever input arrived last, no client-side
+    merge logic needed. Verifying this in headless Chrome required an extra CDP call
+    (`Emulation.setTouchEmulationEnabled`) beyond the usual mobile-viewport override, since
+    `mobile: true` alone doesn't set `navigator.maxTouchPoints` — a test-harness gap, not a
+    product one, worth remembering for any future touch-input verification.
+  - Polish (Milestone 5, RMC-0034): the server never sends discrete events over the wire for this
+    mode (only continuous snapshots, a deliberate Milestone-1 design choice), so audio/visual
+    feedback (bomb-transferred, elimination, round/match win) is derived client-side by diffing
+    consecutive `BombTagGameView` snapshots (`btClientState.ts`'s `diffGameEvents`) rather than
+    needing any new server event. An `aria-live` status region covers the arena canvas's lack of
+    inherent screen-reader content.
 
 ## Web app structure (RMC-0004/0007)
 

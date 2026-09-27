@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react';
 import type {
+  BombTagServerMessage,
   DrawGuessClientMessage,
   DrawGuessServerMessage,
   ServerMessage,
@@ -12,7 +13,7 @@ import { dgReducer, initialDgState, isDgMessage } from './dgClientState';
  * sirf DG_* messages sunta hai.
  */
 export function useDrawGuessSocket(
-  onRawMessage: (listener: (message: ServerMessage | DrawGuessServerMessage) => void) => () => void,
+  onRawMessage: (listener: (message: ServerMessage | DrawGuessServerMessage | BombTagServerMessage) => void) => () => void,
   rawSend: (message: DrawGuessClientMessage) => void,
 ) {
   const [state, dispatch] = useReducer(dgReducer, initialDgState);

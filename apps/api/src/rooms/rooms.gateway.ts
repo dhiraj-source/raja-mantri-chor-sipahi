@@ -7,11 +7,14 @@ import {
   SubscribeMessage,
   WebSocketGateway,
 } from '@nestjs/websockets';
-import type { OnModuleDestroy } from '@nestjs/common';
+import type { OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import type { WebSocket } from 'ws';
+import { TICK_MS as BT_TICK_MS } from '@rmc/bomb-tag-engine';
 import { summarizeGameForPlayer } from '@rmc/game-engine';
 import {
   RECONNECT_TOKEN_PARAM,
+  type BombTagServerMessage,
+  type BombTagSettings,
   type DrawGuessServerMessage,
   type DrawGuessSettings,
   type DrawGuessStroke,
@@ -20,6 +23,7 @@ import {
   type VoteChoice,
 } from '@rmc/shared-types';
 import { AccountsService } from '../accounts/accounts.service';
+import { BombTagService, RoomError as BtRoomError } from '../bomb-tag/bomb-tag.service';
 import { DrawGuessService, RoomError as DgRoomError } from '../draw-guess/draw-guess.service';
 import { FriendsService } from '../friends/friends.service';
 import { MatchmakingService } from './matchmaking.service';
@@ -42,10 +46,12 @@ const MAX_MESSAGES_PER_SECOND = Number(process.env.MAX_MESSAGES_PER_SECOND ?? 40
 const MAX_PAYLOAD_BYTES = Number(process.env.MAX_PAYLOAD_BYTES ?? 16_384);
 /** Bot Mantri ka guess itni der (ms) me aata hai — insaan jaisa lagne ke liye thoda ruk kar. */
 const BOT_GUESS_DELAY_MS = Number(process.env.BOT_GUESS_DELAY_MS ?? 1800);
+/** Bomb Tag: round khatam hone ke result-screen ke baad itni der me agla round shuru. */
+const BT_ROUND_RESULT_MS = Number(process.env.BT_ROUND_RESULT_MS ?? 5_000);
 
 /** Har socket ek guest player hai. Reconnect: ?token=<secret> se purana player wapas milta hai. */
 @WebSocketGateway({ path: '/ws', maxPayload: MAX_PAYLOAD_BYTES })
-export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleDestroy {
+export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit, OnModuleDestroy {
   private readonly sockets = new Map<PlayerId, WebSocket>();
   private readonly playerOfSocket = new WeakMap<WebSocket, PlayerId>();
   private readonly graceTimers = new Map<PlayerId, NodeJS.Timeout>();
@@ -64,6 +70,11 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
   private readonly dgChatSent = new Map<string, number>();
   /** Draw & Guess: disconnected player ke wapas aane ka intezaar (RMCS jaisa hi grace time). */
   private readonly dgGraceTimers = new Map<PlayerId, NodeJS.Timeout>();
+  /** Bomb Tag: ek hi global tick-loop (continuous movement/bomb simulation), har active room ke liye. */
+  private btTickTimer: NodeJS.Timeout | null = null;
+  private btLastTickAt: number | null = null;
+  /** Bomb Tag: round-result/next-round ke liye per-room timer (RMCS/DG jaisa hi pattern). */
+  private readonly btTimers = new Map<string, NodeJS.Timeout>();
   private nextSocketId = 0;
   private readonly socketIds = new WeakMap<WebSocket, string>();
 
@@ -74,6 +85,7 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     private readonly accounts: AccountsService,
     private readonly friends: FriendsService,
     private readonly drawGuess: DrawGuessService,
+    private readonly bombTag: BombTagService,
   ) {
     this.rooms.onGameFinished = (game) => void this.rewardPlayers(game);
     this.rooms.onRoundStarted = (code) => this.maybeScheduleBotGuess(code);
@@ -95,6 +107,30 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     this.drawGuess.onTurnStarted = rescheduleDg;
     this.drawGuess.onTurnEnded = rescheduleDg;
     this.drawGuess.onGameFinished = (code) => this.clearDgTimer(code);
+
+    // Bomb Tag: round khatam ho (ya match khatam ho) to result screen ke liye ek chhota pause,
+    // phir agla round apne aap (match khatam ho chuka ho to nahi).
+    this.bombTag.onRoundOver = (code) => this.armBtRoundTransition(code);
+    this.bombTag.onGameOver = (code) => this.clearBtTimer(code);
+  }
+
+  onModuleInit(): void {
+    // Bomb Tag: ek hi global ticker — jitne bhi rooms abhi PLAYING/COUNTDOWN me hain, sabko step
+    // karta hai. Per-room setInterval banane se zyada efficient (10 rooms ho ya 1, ek hi timer).
+    this.btLastTickAt = Date.now();
+    this.btTickTimer = setInterval(() => this.tickBombTagRooms(), BT_TICK_MS);
+  }
+
+  private tickBombTagRooms(): void {
+    const now = Date.now();
+    const dtMs = this.btLastTickAt !== null ? now - this.btLastTickAt : BT_TICK_MS;
+    this.btLastTickAt = now;
+    for (const code of this.bombTag.getTickableRoomCodes()) {
+      const events = this.bombTag.tickRoom(code, dtMs);
+      this.broadcastBtGameView(code);
+      // Score sirf round-over/game-over par badalta hai — tabhi roster (BT_ROOM_STATE) bhi bhejo.
+      if (events.some((e) => e.type === 'ROUND_OVER' || e.type === 'GAME_OVER')) this.broadcastBtRoom(code);
+    }
   }
 
   // ---- Presence (kaun online hai) aur friends ki live khabar ----
@@ -226,6 +262,7 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       ...this.voteTimers.values(),
       ...this.botGuessTimers.values(),
       ...this.dgTimers.values(),
+      ...this.btTimers.values(),
     ]) {
       clearTimeout(timer);
     }
@@ -236,6 +273,9 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     this.dgChatSent.clear();
     for (const timer of this.dgGraceTimers.values()) clearTimeout(timer);
     this.dgGraceTimers.clear();
+    this.btTimers.clear();
+    if (this.btTickTimer) clearInterval(this.btTickTimer);
+    this.btTickTimer = null;
   }
 
   handleConnection(socket: WebSocket, request?: IncomingMessage): void {
@@ -243,7 +283,12 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     const token = this.readToken(request);
     const known = token ? this.sessions.resolve(token) : null;
 
-    if (known && (this.rooms.getRoomCodeOf(known) || this.drawGuess.getRoomCodeOf(known))) {
+    if (
+      known &&
+      (this.rooms.getRoomCodeOf(known) ||
+        this.drawGuess.getRoomCodeOf(known) ||
+        this.bombTag.getRoomCodeOf(known))
+    ) {
       this.restore(socket, known, token as string);
       return;
     }
@@ -285,9 +330,17 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       this.armDgGrace(playerId);
     }
 
+    // Bomb Tag: koi grace time nahi (fast-paced game, bomb ka timer khud ~15s ka hai) — turant
+    // forfeit + naya host agar zaroorat ho, service ke andar hi ho jaata hai.
+    const btCode = this.bombTag.getRoomCodeOf(playerId);
+    if (btCode) {
+      this.bombTag.setConnected(playerId, false);
+      this.broadcastBtRoom(btCode);
+    }
+
     const code = this.rooms.getRoomCodeOf(playerId);
     if (!code) {
-      if (!dgCode) this.dropSession(playerId);
+      if (!dgCode && !btCode) this.dropSession(playerId);
       return;
     }
     this.rooms.setConnected(playerId, false);
@@ -694,6 +747,12 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       this.drawGuess.setConnected(playerId, true);
       this.broadcastDgRoom(dgCode);
     }
+    const btCode = this.bombTag.getRoomCodeOf(playerId);
+    if (btCode) {
+      this.bombTag.setConnected(playerId, true);
+      this.broadcastBtRoom(btCode);
+    }
+
     const code = this.rooms.getRoomCodeOf(playerId);
     if (code) {
       this.rooms.setConnected(playerId, true);
@@ -813,7 +872,151 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     }
   }
 
-  private send(playerId: PlayerId, message: ServerMessage | DrawGuessServerMessage): void {
+  // ---------------------------------------------------------------------------
+  // Bomb Tag — real-time arena game, apna room map (BombTagService), same socket.
+  // Tick loop `onModuleInit`/`tickBombTagRooms` me hai (upar constructor ke paas).
+  // ---------------------------------------------------------------------------
+
+  @SubscribeMessage('BT_CREATE_ROOM')
+  btCreateRoom(
+    @ConnectedSocket() socket: WebSocket,
+    @MessageBody() body: { name?: string; settings?: Partial<BombTagSettings> },
+  ): void {
+    this.btHandle(socket, (id) => this.bombTag.createRoom(id, body?.name as string, body?.settings));
+  }
+
+  @SubscribeMessage('BT_JOIN_ROOM')
+  btJoinRoom(
+    @ConnectedSocket() socket: WebSocket,
+    @MessageBody() body: { code?: string; name?: string },
+  ): void {
+    this.btHandle(socket, (id) => this.bombTag.joinRoom(id, body?.code as string, body?.name as string));
+  }
+
+  @SubscribeMessage('BT_LEAVE_ROOM')
+  btLeaveRoom(@ConnectedSocket() socket: WebSocket): void {
+    const playerId = this.playerOfSocket.get(socket);
+    if (!playerId) return;
+    const code = this.bombTag.leaveRoom(playerId);
+    this.send(playerId, { event: 'BT_ROOM_STATE', data: null });
+    this.send(playerId, { event: 'BT_GAME_VIEW', data: null });
+    if (code) this.broadcastBtRoom(code);
+  }
+
+  @SubscribeMessage('BT_READY')
+  btReady(@ConnectedSocket() socket: WebSocket, @MessageBody() body: { ready?: boolean }): void {
+    this.btHandle(socket, (id) => this.bombTag.setReady(id, Boolean(body?.ready)));
+  }
+
+  @SubscribeMessage('BT_UPDATE_SETTINGS')
+  btUpdateSettings(
+    @ConnectedSocket() socket: WebSocket,
+    @MessageBody() body: { settings?: Partial<BombTagSettings> },
+  ): void {
+    this.btHandle(socket, (id) => this.bombTag.updateSettings(id, body?.settings ?? {}));
+  }
+
+  @SubscribeMessage('BT_KICK_PLAYER')
+  btKickPlayer(@ConnectedSocket() socket: WebSocket, @MessageBody() body: { playerId?: string }): void {
+    this.btGuard(socket, (id) => {
+      const { code, kickedId } = this.bombTag.kickPlayer(id, body?.playerId as string);
+      this.send(kickedId, { event: 'BT_ROOM_STATE', data: null });
+      this.send(kickedId, { event: 'BT_GAME_VIEW', data: null });
+      this.broadcastBtRoom(code);
+    });
+  }
+
+  @SubscribeMessage('BT_START_GAME')
+  btStartGame(@ConnectedSocket() socket: WebSocket): void {
+    this.btHandle(socket, (id) => this.bombTag.startGame(id));
+  }
+
+  /** Movement input — har frame client se aa sakta hai, isliye koi error-reporting overhead nahi (chup-chaap ignore/clamp). */
+  @SubscribeMessage('BT_INPUT')
+  btInput(@ConnectedSocket() socket: WebSocket, @MessageBody() body: { x?: number; y?: number }): void {
+    const playerId = this.playerOfSocket.get(socket);
+    if (!playerId) return;
+    this.bombTag.setInput(playerId, Number(body?.x), Number(body?.y));
+  }
+
+  @SubscribeMessage('BT_END_GAME')
+  btEndGame(@ConnectedSocket() socket: WebSocket): void {
+    this.btGuard(socket, (id) => {
+      const code = this.bombTag.forceEndGame(id);
+      this.clearBtTimer(code); // pending round-transition ho to usse cancel karo
+      this.broadcastBtRoom(code);
+    });
+  }
+
+  @SubscribeMessage('BT_RETURN_TO_LOBBY')
+  btReturnToLobby(@ConnectedSocket() socket: WebSocket): void {
+    this.btHandle(socket, (id) => this.bombTag.returnToLobby(id));
+  }
+
+  /** Round result screen ke baad agla round apne aap (match khatam ho chuka ho to `onRoundOver` fire hi nahi hota). */
+  private armBtRoundTransition(code: string): void {
+    this.clearBtTimer(code);
+    this.btTimers.set(
+      code,
+      setTimeout(() => {
+        this.btTimers.delete(code);
+        this.bombTag.startNextRound(code);
+        this.broadcastBtRoom(code);
+      }, BT_ROUND_RESULT_MS),
+    );
+  }
+
+  private clearBtTimer(code: string): void {
+    const timer = this.btTimers.get(code);
+    if (timer) clearTimeout(timer);
+    this.btTimers.delete(code);
+  }
+
+  private btHandle(socket: WebSocket, action: (playerId: PlayerId) => string): void {
+    this.btGuard(socket, (playerId) => this.broadcastBtRoom(action(playerId)));
+  }
+
+  private btGuard(socket: WebSocket, action: (playerId: PlayerId) => void): void {
+    const playerId = this.playerOfSocket.get(socket);
+    if (!playerId) return;
+    try {
+      action(playerId);
+    } catch (e) {
+      this.reportBtError(playerId, e);
+    }
+  }
+
+  private reportBtError(playerId: PlayerId, e: unknown): void {
+    if (e instanceof BtRoomError) {
+      this.send(playerId, { event: 'BT_ERROR', data: { code: e.code, message: e.message } });
+    } else {
+      console.error('Unexpected error in bomb-tag action', e);
+      this.send(playerId, { event: 'BT_ERROR', data: { code: 'BAD_MESSAGE', message: 'Kuch galat ho gaya.' } });
+    }
+  }
+
+  /** Roster (lobby list/scores/status) badla — har player ko room state + game view dono bhejo. */
+  private broadcastBtRoom(code: string): void {
+    const roomView = this.bombTag.getRoomView(code);
+    for (const id of this.bombTag.getPlayerIds(code)) {
+      this.send(id, { event: 'BT_ROOM_STATE', data: roomView });
+      this.send(id, { event: 'BT_GAME_VIEW', data: this.bombTag.getGameView(code) });
+    }
+  }
+
+  /** Tick rate par sirf lean game-view bhejo — roster har frame nahi badalta, isliye alag se bhejne ki zaroorat nahi. */
+  private broadcastBtGameView(code: string): void {
+    const gameView = this.bombTag.getGameView(code);
+    if (!gameView) return;
+    for (const id of this.bombTag.getPlayerIds(code)) {
+      this.send(id, { event: 'BT_GAME_VIEW', data: gameView });
+    }
+  }
+
+  private send(
+    playerId: PlayerId,
+    message: ServerMessage | DrawGuessServerMessage | BombTagServerMessage,
+  ): void {
     const socket = this.sockets.get(playerId);
     if (socket && socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));
   }

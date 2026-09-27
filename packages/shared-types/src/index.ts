@@ -4,6 +4,7 @@
  */
 
 export * from './draw-guess';
+export * from './bomb-tag';
 
 export type PlayerId = string;
 

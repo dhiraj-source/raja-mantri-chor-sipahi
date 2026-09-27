@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { DrawGuessServerMessage, PlayerId, RoomPlayerView, ServerMessage } from '@rmc/shared-types';
+import type { BombTagServerMessage, DrawGuessServerMessage, PlayerId, RoomPlayerView, ServerMessage } from '@rmc/shared-types';
 import {
   VoiceRoom,
   defaultPeerConnectionFactory,
@@ -17,10 +17,10 @@ interface Params {
   sendMute: (muted: boolean) => void;
   /**
    * VOICE_SIGNAL/VOICE_MUTE server messages yahan se milte hain (clientState se alag rakha hai).
-   * Ek hi socket Draw & Guess ke DG_* messages bhi isi se guzarta hai — voice chat unhe chhoo
-   * nahi paata (sirf VOICE_* check karta hai), isliye type yahan dono union accept karta hai.
+   * Ek hi socket Draw & Guess aur Bomb Tag ke messages (DG_/BT_ prefix) bhi isi se guzarta hai —
+   * voice chat unhe chhoo nahi paata (sirf VOICE_* check karta hai), isliye type yahan poora union accept karta hai.
    */
-  onRawMessage: (listener: (message: ServerMessage | DrawGuessServerMessage) => void) => () => void;
+  onRawMessage: (listener: (message: ServerMessage | DrawGuessServerMessage | BombTagServerMessage) => void) => () => void;
 }
 
 /**

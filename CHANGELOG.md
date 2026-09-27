@@ -1084,3 +1084,194 @@ None.
 ## Known limitations
 - None new. Phase 3's existing known limitations (see RMC-0024 through RMC-0028 entries above) are unchanged — this entry is purely about getting the already-built feature safely into production.
 
+# RMC-0030
+
+## Feature
+Phase 4 kickoff — Bomb Tag (fast real-time multiplayer arena game), Milestone 1: pure engine + wire protocol
+
+## Status
+COMPLETE for Milestone 1 only. Phase 4 overall NOT complete — see DEVELOPMENT/PHASE_4_BOMB_TAG/STATUS.md for remaining milestones (NestJS wiring + tick loop, React canvas UI, mobile controls, polish, deploy).
+
+## What changed
+- Owner gave a full 48-section spec for a third game mode, Bomb Tag — players move continuously around a small arena, one holds a countdown bomb, tagging another player transfers it, whoever's holding it when the timer hits zero is eliminated, last one standing wins the round, first to N round-wins takes the match.
+- This is architecturally new territory for the project: RMCS and Draw & Guess are both turn-based/event-driven; Bomb Tag needs continuous player movement, which means a genuinely new piece of infrastructure — a server-side tick loop — will be needed in Milestone 2. Flagged this explicitly to the owner before starting, same as every other "this is new, not reused" moment this project has been careful about.
+- New, fully independent pure package `packages/bomb-tag-engine` (mirrors `@rmc/draw-guess-engine`'s conventions exactly): `geometry.ts` (vector math, arena-bounds clamping, circular spawn-point generation with guaranteed spacing), `movement.ts` (speed+direction+dt → clamped position, diagonal movement correctly normalized so it isn't faster than cardinal movement), `collision.ts` (deterministic nearest-valid-tag-target resolution, with an explicit alphabetical tie-break for the simultaneous-multi-touch edge case the spec called out), and `state.ts` (the state machine: `COUNTDOWN → PLAYING → ROUND_OVER → GAME_OVER`, bomb assignment/transfer/explosion, a transfer-cooldown that also naturally covers "can't be re-tagged the instant a round starts", round-over/match-win detection, and `forfeit()` for immediate disconnect-during-play handling — deliberately simpler than Draw & Guess's grace-timer approach, reasoned through and explained below).
+- `packages/shared-types/src/bomb-tag.ts`: the wire protocol. Notably simpler than RMCS/Draw & Guess in one respect — Bomb Tag has no hidden information (unlike secret roles or a secret word, everyone can see everyone's position and who holds the bomb), so there's a single shared view broadcast to all players rather than a per-viewer-customized one. Split into two parts on purpose: a `BombTagRoomView` (roster — names/colors/host/ready/score) that only changes on discrete events (join/leave/ready/round-end), and a lean `BombTagGameView` (phase/round/bomb state/player positions+alive) meant to be sent at the tick rate — this keeps the high-frequency payload from repeating static data every time, directly addressing the spec's "avoid unnecessary network traffic" requirement.
+- Deliberate design decision on disconnects: unlike Draw & Guess's grace-period-then-remove, Bomb Tag forfeits a disconnected player immediately during an active round (marking them not-alive, reassigning the bomb if they held it). Reasoned explicitly: a 60-second-style grace period doesn't fit a game whose entire bomb timer is ~15 seconds — waiting would make elimination nearly meaningless. This is recorded as an intentional difference between the two modes' disconnect handling, not an inconsistency.
+
+## Reason
+Owner's Phase 4 request ("full hand to think and implement"); starting with the same safest-first approach as every other mode so far — pure, framework-free logic that can be fully verified before any networking or UI is built on top of it.
+
+## Database
+None.
+
+## API
+None yet (Milestone 2).
+
+## WebSocket
+None yet — the wire protocol types exist in shared-types, but no NestJS module or gateway wiring yet (Milestone 2).
+
+## Tests
+- 39 new tests across `geometry.test.ts`, `movement.test.ts`, `collision.test.ts`, `state.test.ts` — including the full round lifecycle (countdown → playing → transfer → explosion → round-over → next round → eventual match win), the transfer-cooldown behavior, the 2-player edge case the spec explicitly called out, and disconnect/forfeit handling (bomb holder disconnects → reassigned; last-two-players disconnect → immediate round win for the survivor).
+- One test bug caught and fixed during this milestone (worth recording, matches this project's habit of not just deleting failing tests): a test assumed a transfer could happen 100ms after round start, not accounting for the fact that the transfer-cooldown mechanism also — correctly — applies to the very first bomb holder from the moment the round begins, giving them a brief instant of safety before they can be tagged. Judged this actual behavior to be good, intentional game design (nobody gets tagged the literal instant a round starts) rather than a bug, and fixed the test's timing assumptions instead of changing the engine.
+- Full repo build + lint + entire existing test suite (37 engine + 50 draw-guess-engine + 39 bomb-tag-engine + 150 api + 129 web = 405) re-run — all pass, RMCS and Draw & Guess untouched.
+
+## Known limitations
+- Not playable yet — no NestJS module, no tick loop, no React UI. Pure, unwired logic only (Milestone 1 of Phase 4).
+- No client-side movement prediction/interpolation designed yet (will be decided in Milestone 3 once there's a real canvas to test smoothness against).
+
+# RMC-0031
+
+## Feature
+Phase 4 — Bomb Tag, Milestone 2: server core (NestJS module + global tick loop, wired into the shared gateway) — now playable over raw WebSocket.
+
+## Status
+COMPLETE for Milestone 2 only. Phase 4 overall NOT complete — see DEVELOPMENT/PHASE_4_BOMB_TAG/STATUS.md for remaining milestones (React canvas UI, mobile controls, polish, deploy).
+
+## What changed
+- `apps/api/src/bomb-tag/bomb-tag.service.ts` + `bomb-tag.module.ts`: own in-memory room map (independent of RMCS's and Draw & Guess's), full lobby (create/join/leave/ready/kick/settings, host transfer) and full match lifecycle (start → tick → round-over → next round → game-over → force-end/return-to-lobby), server-authoritative throughout.
+- `RoomsGateway` gained the project's **first continuous tick loop**: one global `setInterval(BT_TICK_MS = 50)` (`onModuleInit`/`tickBombTagRooms`) steps every room currently in `COUNTDOWN`/`PLAYING` each tick — a single shared timer for all active Bomb Tag rooms, not one per room, same efficiency reasoning recorded in RMC-0030. All `BT_*` `@SubscribeMessage` handlers added to the **same existing gateway** (no second socket), following the exact `dgHandle`/`dgGuard`/broadcast pattern already established for Draw & Guess. Round-result → next-round uses a per-room `setTimeout` (`BT_ROUND_RESULT_MS`, default 5s), same shape as RMCS's/DG's own timers.
+- Disconnect handling has **no grace period** (unlike RMCS/DG) — an explicit, documented design choice from RMC-0030 (a ~15s bomb timer makes a 60s grace period meaningless): `handleDisconnect` calls `BombTagService.setConnected(id, false)` immediately, which forfeits the player mid-round if a game is active.
+- **Two real bugs found and fixed by live-server verification, invisible to unit tests alone:**
+  1. `BombTagService.setConnected` and `leaveRoom` both called the engine's `forfeit()` directly and discarded its returned `events` array, so a round ending via disconnect or leave never called the `onRoundOver`/`onGameOver` hooks the gateway depends on to schedule the next round. Result: a round correctly ended (state was right, clients saw `ROUND_OVER`), but the match then sat there forever — no timer was ever armed to start the next round. Only `tickRoom` (bomb-timer-driven eliminations) was forwarding events correctly. Fixed by extracting a shared `notifyEvents()` helper and using it in all three places that call `forfeit()`/`tick()`.
+  2. A genuine gameplay bug, not just a wiring bug: `startNextRound` revives the engine's entire fixed `playerOrder` as `alive: true` for the new round (by design — the engine's roster never shrinks mid-match). But nothing re-applied `forfeit()` to players who had actually left the room or were still disconnected, so **a player who fully left mid-match, or who disconnected and never reconnected, would come back as an uncontrollable "ghost" every subsequent round** — occupying a spawn point, counting toward the alive total, blocking the match from resolving normally. Fixed in the service's `startNextRound`: after the engine starts the new round, re-forfeit anyone no longer in `room.players` (fully left) or still in the `disconnected` set (never reconnected) — cascades correctly (including auto-resolving a round instantly, and the whole match, if too few real players remain).
+- Both bugs were caught by actually running the built server and exercising it with real WebSocket clients (`apps/api/scripts/smoke-bt.mjs`) — exactly the kind of bug this project's verification ladder exists to catch, and neither would have been visible from unit tests or a read-through alone.
+
+## Reason
+Continuing Phase 4 per the owner's "full hand to think and implement"; server core must exist and be verified before any UI is built on top of it, matching the order every other mode in this project has followed.
+
+## Database
+None.
+
+## API
+None (WebSocket only, like RMCS/Draw & Guess).
+
+## WebSocket
+New `BT_*` events on the existing `/ws` gateway: `BT_CREATE_ROOM`, `BT_JOIN_ROOM`, `BT_LEAVE_ROOM`, `BT_READY`, `BT_UPDATE_SETTINGS`, `BT_KICK_PLAYER`, `BT_START_GAME`, `BT_INPUT` (per-frame movement, silently ignored/clamped rather than error-reported), `BT_END_GAME`, `BT_RETURN_TO_LOBBY` (client→server); `BT_ROOM_STATE`, `BT_GAME_VIEW`, `BT_ERROR` (server→client). `BT_GAME_VIEW` is broadcast at tick rate (lean payload); `BT_ROOM_STATE` only on roster-affecting changes (join/leave/ready/round-over/game-over), per the two-part wire protocol designed in RMC-0030.
+
+## Tests
+- 20 new tests in `apps/api/test/bomb-tag.service.test.ts` (lobby, settings, start-game validation, full round/match lifecycle including the two bugs above once fixed, movement input clamping, disconnect/reconnect, host controls) — deterministic via injected `random`/`now`, same pattern as `draw-guess.service.test.ts`.
+- New real end-to-end smoke test, `apps/api/scripts/smoke-bt.mjs`: 2-client full match (lobby → countdown → playing → movement → disconnect-forfeit → round-over → automatic next round → cascading match-end since the opponent never reconnects) plus a separate 3-client scenario proving a real WebSocket disconnect-then-same-token-reconnect mid-round restores room/game state correctly. This is the script that caught both bugs above — it failed twice before passing, each failure pointing at a real, fixed defect, not a flaky test.
+- Full repo build + lint + entire existing test suite (37 engine + 50 draw-guess-engine + 39 bomb-tag-engine + 170 api [150 + 20 new] + 129 web = 425) re-run — all pass, RMCS and Draw & Guess untouched.
+
+## Known limitations
+- Still not playable in a real browser — no React UI yet (Milestone 3): raw WebSocket / smoke-test only.
+- No auto-end-early rule if a match becomes effectively 1-vs-nobody (e.g. everyone else disconnected) — the lone remaining player currently keeps "winning" empty rounds every `BT_ROUND_RESULT_MS` until `roundsToWin` is reached, rather than the host being prompted to end it sooner. Not incorrect, just not the smoothest possible UX; host can already `BT_END_GAME` manually at any time.
+- Mobile virtual-joystick controls, i18n, and polish are Milestones 4-5, not started.
+
+# RMC-0032
+
+## Feature
+Phase 4 — Bomb Tag, Milestone 3: React UI (arena canvas, keyboard controls, HUD, lobby/menu integration, round/match results) — now playable in a real browser.
+
+## Status
+COMPLETE for Milestone 3 only. Phase 4 overall NOT complete — see DEVELOPMENT/PHASE_4_BOMB_TAG/STATUS.md (Milestone 4 remaining: mobile virtual-joystick controls only — reconnection hardening and i18n, also originally scoped for Milestone 4, were already done in Milestones 2 and 3 respectively; Milestone 5 polish still open; not yet deployed).
+
+## What changed
+- `apps/web/src/bomb-tag/`: a brand-new module mirroring Draw & Guess's established conventions exactly — `btClientState.ts`/`useBombTagSocket.ts` (reducer + socket hook, listening only to `BT_*` events on the one shared WebSocket), `BombTagApp.tsx` (screen switcher: home → lobby → game, same shape as `DrawGuessApp.tsx`), `BtHome.tsx`, `BtLobby.tsx` (create/join, ready/kick/settings — same UI conventions as Draw & Guess's equivalents), `BtGameScreen.tsx` (renders all four engine phases: `COUNTDOWN`/`PLAYING`/`ROUND_OVER`/`GAME_OVER`), `Arena.tsx` (the actual arena renderer), `useKeyboardInput.ts` (WASD/arrow-key movement), `BtScoreboard.tsx`.
+- `Arena.tsx`: a `<canvas>` sized to the server's own `arenaWidth`/`arenaHeight`/`playerRadius` (never hardcoded — server-authoritative down to the rendering dimensions), redrawn fully on every new `BombTagGameView` (~20fps from the tick loop) rather than attempting client-side interpolation/prediction — a deliberately simple first pass, flagged as a possible follow-up if movement ever looks choppy on a slower connection. Draws each player as a colored circle (color/name come from the separate, less-frequent `BombTagRoomView` roster, joined by id), a white ring around "you", an amber ring + bomb emoji on whoever currently holds the bomb, and fades eliminated players to 25% opacity rather than hiding them (spectators can still see where bodies "were").
+- `useKeyboardInput.ts`: WASD + arrow keys (both work simultaneously), sends `BT_INPUT` only when the combined direction actually changes (not every frame) — the server's own `clampMagnitude` handles diagonal-movement normalization, so the client deliberately does no math of its own, just reports raw key state. The direction computation itself (`computeDirection`) is a small pure function pulled out specifically so it's unit-testable without a DOM/React test harness (this project has no `@testing-library/react` — pure-function extraction is the established way to keep hook logic testable, same reasoning as the engine packages).
+- Wired into the existing infrastructure exactly like Draw & Guess was: `ModeSelect.tsx` gained a third card; `App.tsx` mounts `useBombTagSocket` alongside the Draw & Guess socket hook (same shared connection, reload/reconnect restores the right screen automatically without depending on client-only "which mode" state); `useGameSocket`'s `send`/`onRawMessage`, `clientState.ts`'s `parseServerMessage`/`ClientEvent`, and `useVoiceChat`'s declared listener type were all widened to the 3-way union (`ServerMessage | DrawGuessServerMessage | BombTagServerMessage`) the same way they were widened for Draw & Guess in Milestone 3 of Phase 3.
+- i18n (English + Hindi) done now rather than deferred to Milestone 4 as originally planned — ~65 new `bt.*` keys, same `t()` mechanism and the same `Record<MessageKey, string>` compile-time parity check every other language already relies on.
+- One real bug caught by JSDoc comment syntax, not logic: two files' `/** ... */` block comments contained the literal substring `DG_*/BT_*`, and TypeScript's parser read the embedded `*/` as closing the comment early, corrupting everything after it into a syntax error. Fixed by rewording the comments to avoid a literal `*/` sequence — worth remembering for any future comment that names two wildcard-prefixed things together.
+
+## Reason
+Continuing Phase 4 per the owner's "full hand to think and implement"; the server core (Milestone 2) needed a real UI on top before Bomb Tag is actually playable by anyone.
+
+## Database
+None.
+
+## API
+None (no server-side changes this milestone — purely client-side, consuming the wire protocol Milestone 2 already built).
+
+## WebSocket
+No new events — this milestone is the browser-side consumer of the `BT_*` protocol RMC-0031 already implemented.
+
+## Tests
+- 11 new unit tests: `btClientState.test.ts` (6, reducer behavior — mirrors `dgClientState.test.ts`) and `useKeyboardInput.test.ts` (5, the pure `computeDirection` function — WASD/arrows, diagonals, opposite-key cancellation, unknown-key handling).
+- Full repo build + lint + entire existing test suite (37 engine + 50 draw-guess-engine + 39 bomb-tag-engine + 170 api + 140 web = 436) re-run — all pass, RMCS and Draw & Guess untouched.
+- **Verified in a real browser, not just built**: `scripts/ui-check-bt.mjs` drives real headless Chrome through a complete match — mode select → create room → 2 bot WebSocket clients join and ready up → host starts → COUNTDOWN → PLAYING → **real keyboard input via Chrome DevTools Protocol** (`Input.dispatchKeyEvent`, not a synthetic DOM event) moves the host's on-screen circle, confirmed by comparing before/after screenshots → both bots disconnect (no grace period, as designed) → round ends instantly → the service's Milestone-2 "ghost" fix cascades the match to completion since the bots never reconnect → final results screen with a working "Play again" button. Re-run in Hindi afterward (language switch, leave room, re-create) with zero layout breakage and full translation coverage. No browser console errors, no horizontal overflow at either 390px mobile or 1200px desktop width.
+- One test-script mistake caught and fixed during verification (not a product bug): the script initially assumed disconnecting *one* bot in a 3-player room would end the round — it doesn't, since 2 players remain alive; fixed by disconnecting both bots. It also assumed leaving a Bomb Tag room returns to the mode-select screen — it actually returns straight to that mode's own Home screen (since the `mode` UI state persists), which is correct, intentional behavior matching how the app was already designed; the script's expectation was wrong, not the app.
+
+## Known limitations
+- No mobile virtual-joystick controls yet — keyboard only (desktop). Milestone 4's remaining scope.
+- No client-side movement interpolation/prediction — the arena redraws fresh on every server tick (~20fps). Untested over a genuinely laggy connection; flagged as a possible follow-up, not attempted yet.
+- No chat/voice integration for Bomb Tag (not in the original spec's Definition of Done for this mode, unlike Draw & Guess where it's an open Milestone 5 item).
+- Same known limitation as RMC-0031: no auto-end-early rule for a 1-vs-nobody match; host can already end it manually.
+- Not yet deployed — Bomb Tag is only running in local dev/smoke-test/UI-check so far.
+
+# RMC-0033
+
+## Feature
+Phase 4 — Bomb Tag, Milestone 4: mobile virtual-joystick controls.
+
+## Status
+COMPLETE for Milestone 4. Phase 4 overall NOT complete — reconnection hardening and i18n, also originally scoped for this milestone, were already done in Milestones 2 (RMC-0031) and 3 (RMC-0032) respectively, so this milestone's remaining scope was the joystick alone. Milestone 5 (polish) not started; not yet deployed. See DEVELOPMENT/PHASE_4_BOMB_TAG/STATUS.md.
+
+## What changed
+- `apps/web/src/bomb-tag/VirtualJoystick.tsx`: an on-screen draggable joystick using Pointer Events (handles mouse and touch identically, same technique `Canvas.tsx`'s drawing already uses in Draw & Guess) — a fixed-size circular base with a stick that follows the pointer, clamped to the base's radius. Sends the same `onInput` callback `useKeyboardInput` already uses, so the two input sources are interchangeable from the server's point of view (it just remembers whichever direction arrived most recently) — no merge/priority logic needed since a real user only uses one at a time.
+- Rendered conditionally: only on touch-capable devices (`isTouchDevice()`, checked once via `'ontouchstart' in window || navigator.maxTouchPoints > 0`), so keyboard-only desktop players never see it — avoids UI clutter for the majority of the existing player base.
+- The circle-clamp math (`clampToRadius`) is a small pure function, pulled out for the same reason `computeDirection` was in Milestone 3 — unit-testable without a DOM harness.
+- Verified with real headless Chrome, and this surfaced a genuine gap in the *test harness itself* (not the app): Chrome's `Emulation.setDeviceMetricsOverride({ mobile: true })` does **not** by itself set `navigator.maxTouchPoints`/`'ontouchstart' in window` — a separate `Emulation.setTouchEmulationEnabled` call is required. Without it, `isTouchDevice()` correctly returned false (matching real un-emulated Chrome) and the joystick correctly didn't render — which is what first looked like a bug until traced to the test script's own emulation setup being incomplete. Fixed the script, not the app.
+
+## Reason
+Continuing Phase 4 per the owner's "PROCEED"; mobile input was the one remaining item in Milestone 4's original scope once reconnection hardening and i18n turned out to already be done.
+
+## Database
+None.
+
+## API
+None (client-side only, same `BT_INPUT` event Milestone 2 already implemented).
+
+## WebSocket
+None (reuses the existing `BT_INPUT` event — a second input source for the same message, not a new one).
+
+## Tests
+- 4 new unit tests (`virtualJoystick.test.ts`) for `clampToRadius`: within-radius passthrough, out-of-radius clamping to exactly the radius, diagonal clamping (magnitude never exceeds 1), and the center/zero case.
+- Full repo build + lint + entire existing test suite (37 engine + 50 draw-guess-engine + 39 bomb-tag-engine + 170 api + 144 web = 440) re-run — all pass.
+- **Verified in a real browser**: extended `scripts/ui-check-bt.mjs` to confirm the joystick renders under mobile-viewport emulation, then dragged it with a real CDP mouse-drag (which fires genuine Pointer Events, the same as touch would) and confirmed via screenshot that the player's on-screen position changed and the stick visually followed the drag.
+
+## Known limitations
+- No haptic feedback or joystick-specific visual polish (e.g., a "dead zone" indicator) — functional but plain; candidate for Milestone 5.
+- Same limitations carried over from RMC-0032: no movement interpolation, no chat/voice, no auto-end-early for 1-vs-nobody matches, not yet deployed.
+- Milestone 5 (animations/effects, audio hooks, accessibility pass) not started.
+
+# RMC-0034
+
+## Feature
+Phase 4 — Bomb Tag, Milestone 5: polish (audio hooks, visual feedback, accessibility pass) — and Dockerfile fix + full real-Docker verification ahead of deploy.
+
+## Status
+COMPLETE for Milestone 5. **All 5 milestones of Phase 4 are now done.** Deploy is the only remaining step — the Dockerfile fix and a full real-container smoke-test pass (all three game modes) were done as part of this entry, in preparation for pushing.
+
+## What changed
+- **Audio**: three new tones in `apps/web/src/audio/sounds.ts` — `BT_TAG` (quick two-note blip when the bomb changes hands), `BT_EXPLODE` (a low descending sawtooth for an elimination), `BT_ROUND_WIN` (a short upbeat fanfare, distinct from the full `WIN` tone reserved for match end). Match end reuses the existing `WIN` sound — which comes with its existing "Victory!" voice-line for free, a nice side effect of reusing rather than inventing a parallel system.
+- Since Bomb Tag's server never sends discrete events over the wire (only continuous `BombTagGameView` snapshots, by design — see RMC-0030), `apps/web/src/bomb-tag/btClientState.ts` now diffs each new snapshot against the previous one (`diffGameEvents`) to derive `TAG`/`EXPLODE`/`ROUND_WIN`/`MATCH_WIN` client-side UI events — explicitly guards against misfiring a `TAG` event for a round's *initial* bomb assignment (only a real hand-change counts). Consumers (the audio effect in `App.tsx`, a visual banner in `BtGameScreen.tsx`) each track their own "last-seen event key" via a ref, the exact same pattern RMCS's own `reactions` list already uses — no shared "consumed" state needed.
+- **Visual**: a small transient banner ("💣 You have the bomb!" / "💀 Eliminated!") shown only to the affected player, fading in/out over ~1.4s via Framer Motion, positioned over the arena.
+- **Accessibility**: an `aria-live="polite"` status region in `BtGameScreen.tsx` — the arena canvas has no inherent screen-reader content, so this narrates a short status line ("`{n} alive. {name} has the bomb.`") that only actually gets announced when the text changes (React's own diffing naturally throttles this — no extra logic needed).
+- **Dockerfile fix (before this could be deployed)**: `apps/api/Dockerfile`'s runtime stage was still missing the `COPY --from=build` pair for `packages/bomb-tag-engine` — the exact same gap-shape as RMC-0029's Draw & Guess deploy crash, caught this time *before* pushing instead of after. Fixed, then verified for real: built the actual production image locally (`docker build -f apps/api/Dockerfile .`), ran it as a container, and ran **all three** game modes' smoke tests (`smoke-ws.mjs`, `smoke-dg.mjs`, `smoke-bt.mjs`) against that running container — all passed.
+- **One genuine pre-existing bug found during that verification, unrelated to Bomb Tag**: `smoke-ws.mjs`'s quick-match queue-name check asserted `["Q1","Q2"]` in that *exact* order, but two independent WebSocket clients sending nearly-simultaneous messages have no guaranteed relative arrival order at the server — this only reliably reproduced now because Docker's virtualized networking has enough extra jitter to occasionally flip the order (unlikely to show on a native localhost connection, which is presumably why it was never caught before). Confirmed `MatchmakingService.join()` itself is correct and order-faithful (`this.queue.push(entry)` — whatever order the server receives requests in is exactly what it stores); the bug was purely in the test's assumption about network delivery order. Fixed by asserting both names are present, order-independent, plus an explicit `waitFor` so each client's assertion only runs once *that client's own* socket has the update (the same class of fix RMC-0029 already applied to `smoke-dg.mjs`).
+
+## Reason
+Owner said "each everything complete krke deploy krdo" — completing Milestone 5 finishes Phase 4's own feature scope; the Dockerfile/Docker-verification work is the mandatory pre-deploy step this project has required since RMC-0029's incident.
+
+## Database
+None.
+
+## API
+None (client-side polish only).
+
+## WebSocket
+None (reuses existing `BT_GAME_VIEW` snapshots — no new events, just client-side derivation).
+
+## Tests
+- 8 new unit tests for `diffGameEvents` (via `btReducer`): first-ever snapshot produces no events, a real bomb hand-change produces `TAG`, a round-start bomb assignment does *not* produce `TAG`, an alive→dead flip produces `EXPLODE`, phase transitions to `ROUND_OVER`/`GAME_OVER` produce `ROUND_WIN`/`MATCH_WIN` with the correct winner id, no change produces no events, and a `null` game view (leaving the room) doesn't crash.
+- Full repo build + lint + entire existing test suite (37 engine + 50 draw-guess-engine + 39 bomb-tag-engine + 170 api + 152 web = 448) re-run — all pass.
+- **Verified in a real browser**: extended `scripts/ui-check-bt.mjs` to assert the `aria-live` region has non-empty, meaningful text during `PLAYING` — passed, no console errors, no layout regressions across the full existing check (English + Hindi, mobile + desktop, keyboard + joystick).
+- **Verified in a real Docker container** (the mandatory pre-deploy step): fresh container, all three game modes' full smoke-test suites, all pass.
+
+## Known limitations
+- Audio/visual polish is deliberately modest (tones + a text banner), not a full effects system (particles, screen-shake, etc.) — judged sufficient for this project's scope.
+- Same limitations carried over from RMC-0033: no movement interpolation, no chat/voice for this mode, no auto-end-early for a 1-vs-nobody match (host can already end manually).
+- Not yet deployed as of this entry — that's the very next step.
+

@@ -206,9 +206,18 @@ await Promise.all(qs.map((x) => x.ready));
 qs[0].send('QUICK_MATCH', { name: 'Q1' });
 qs[1].send('QUICK_MATCH', { name: 'Q2' });
 await qs[1].waitFor(() => queueSizes[1].includes(2), 'queue size 2');
+// Q1 aur Q2 alag WebSocket connections hain — Q2 ka update dekhne ka matlab ye nahi ki Q1 ka
+// apna socket bhi already pahunch chuka hai (RMC-0025 me isi tarah ka race pehle bhi mil chuka
+// hai), isliye Q1 ke apne socket ka bhi alag se wait zaroori hai.
+await qs[0].waitFor(() => queueSizes[0].includes(2), 'queue size 2 (Q1 ke apne socket par bhi)');
 assert(queueSizes[0].includes(2), 'queue me wait kar rahe sabko size update mila');
+// Order check nahi (Q1/Q2 alag WebSocket connections hain — kaunsa message pehle server tak
+// pahunchta hai ye real network timing par depend karta hai, exact order kabhi guaranteed nahi
+// hota, khaaskar Docker jaisi virtualized network ke upar). Sirf ye check karna kaafi/sahi hai
+// ki dono naam maujood hain (sirf count nahi) — server khud apne paas jis order me aaya wahi
+// order rakhta hai (matchmaking.service.ts), yahi asal guarantee hai.
 assert(
-  JSON.stringify(qs[0].queueNames) === JSON.stringify(['Q1', 'Q2']),
+  new Set(qs[0].queueNames).size === 2 && ['Q1', 'Q2'].every((n) => qs[0].queueNames.includes(n)),
   'queue naam bhi bhejta hai (sirf count nahi)',
 );
 qs[0].send('QUICK_MATCH', { name: 'Q1' });

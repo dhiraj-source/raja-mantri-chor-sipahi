@@ -34,4 +34,5 @@ Root ke 5 files (`CLAUDE.md`, `PROJECT_STATUS.md`, `LAST_WORK.md`, `CHANGELOG.md
 
 - **PHASE 1** (RMC-0001 — RMC-0018): Foundation se lekar live deployment tak. **COMPLETE.**
 - **PHASE 2** (RMC-0019 — RMC-0023): Bots, room me mixed human+bot, voice packs, live voice chat. **IN PROGRESS** (checklist done, phase khuli hai owner ke standing instruction ke hisaab se).
-- **PHASE 3** (naya game mode — Draw & Guess): Skribbl.io-style drawing+guessing mode, RMCS ke saath. **IN PROGRESS.**
+- **PHASE 3** (naya game mode — Draw & Guess): Skribbl.io-style drawing+guessing mode, RMCS ke saath. **IN PROGRESS** (Milestones 1-4 + deploy done; live in production).
+- **PHASE 4** (naya game mode — Bomb Tag): fast real-time multiplayer arena game, bomb pass-the-parcel style. **IN PROGRESS.**

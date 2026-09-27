@@ -10,7 +10,7 @@ export interface Tone {
   volume?: number;
 }
 
-export type SoundName = Reaction | 'CORRECT' | 'WRONG' | 'WIN' | 'INVITE';
+export type SoundName = Reaction | 'CORRECT' | 'WRONG' | 'WIN' | 'INVITE' | 'BT_TAG' | 'BT_EXPLODE' | 'BT_ROUND_WIN';
 
 /** Sab awaazen code me hi hain (koi audio file nahi). Har ek 1 second se chhoti. */
 export const SOUNDS: Record<SoundName, readonly Tone[]> = {
@@ -57,6 +57,19 @@ export const SOUNDS: Record<SoundName, readonly Tone[]> = {
   INVITE: [
     { freq: 880, start: 0, duration: 0.1, type: 'sine' },
     { freq: 1175, start: 0.14, duration: 0.18, type: 'sine' },
+  ],
+  // ---- Bomb Tag (Phase 4, Milestone 5) ----
+  BT_TAG: [
+    { freq: 700, start: 0, duration: 0.04, type: 'square', volume: 0.12 },
+    { freq: 950, start: 0.05, duration: 0.06, type: 'square', volume: 0.12 },
+  ],
+  BT_EXPLODE: [
+    { freq: 160, start: 0, duration: 0.3, type: 'sawtooth', volume: 0.22 },
+    { freq: 80, start: 0.04, duration: 0.35, type: 'sawtooth', volume: 0.18 },
+  ],
+  BT_ROUND_WIN: [
+    { freq: 660, start: 0, duration: 0.1, type: 'triangle' },
+    { freq: 880, start: 0.1, duration: 0.22, type: 'triangle' },
   ],
 };
 
