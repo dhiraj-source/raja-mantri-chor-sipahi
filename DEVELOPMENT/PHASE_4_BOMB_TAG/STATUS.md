@@ -156,8 +156,17 @@ movement messages ke baad socket OPEN + PLAYING + sab alive + koi winner nahi), 
 me bot asli positions se host ka peecha karke warning trigger karta hai aur phir door jaakar timer
 ko 5s tak girne deta hai. 464 tests pass, teeno modes Docker image + live production dono par pass.
 
-**Ek nayi known limitation mili**: do players bilkul ek doosre ke upar khade rahein to bomb har
-~400ms (cooldown) par transfer hoti rehti hai aur har transfer timer reset kar deta hai — round
-kabhi khatam hi nahi hota. UI check likhte waqt dikha (bot host par park ho gaya, timer 15s par
-atka raha). Abhi change nahi kiya (existing tag-rules ka natural nateeja hai, asli players alag ho
-jaate hain), par agar real play me dikhe to transfer par poora timer reset na karna ek seedha fix hai.
+**Ek nayi known limitation mili** (neeche "Open follow-ups" me tracked hai): do players bilkul ek
+doosre ke upar khade rahein to bomb har ~400ms (cooldown) par transfer hoti rehti hai aur har
+transfer timer reset kar deta hai — round kabhi khatam hi nahi hota. UI check likhte waqt dikha
+(bot host par park ho gaya, timer 15s par atka raha).
+
+## Open follow-ups (Phase 4 ke baad bache hue, koi bhi blocker nahi)
+
+| # | Kya | Kyun abhi nahi kiya | Fix ka seedha raasta |
+|---|---|---|---|
+| F1 | **Bomb ping-pong se round stall** — do players ek doosre ke upar khade rahein to bomb har ~400ms transfer hoti rehti hai, har transfer timer 15s par reset kar deta hai, round khatam hi nahi hota (RMC-0036 me mila) | Existing tag-rules ka natural nateeja hai; asli players alag ho jaate hain, isliye real play me dikha nahi. Game-rule badalna = design decision, owner ki marzi chahiye | `state.ts` ke `tick()` me transfer par poora `bombDurationMs` reset na karo — ya bacha hua time hi carry karo, ya sirf thoda bonus do (jaise `min(bacha + 3s, bombDurationMs)`). Isse bomb "garam aloo" jaisa rehta hai aur round hamesha khatam hota hai |
+| F2 | Movement interpolation/prediction nahi hai — arena har server snapshot (20Hz) par fresh draw hota hai | Local aur production dono par smooth laga; bina zaroorat complexity add karna theek nahi | Client par do snapshots ke beech position interpolate karna (`Arena.tsx` ke rAF loop me already jagah hai) |
+| F3 | Is mode me chat/voice nahi hai | Original spec me nahi tha | RMCS ka voice system already maujood hai, wahi reuse ho sakta hai |
+| F4 | 1-vs-koi-nahi match turant khatam nahi hota — akela bacha player khali rounds "jeetta" rehta hai jab tak `roundsToWin` na pahunche | Galat nahi hai, bas smooth nahi; host `BT_END_GAME` se kabhi bhi khatam kar sakta hai | Service me check: agar connected+alive players 2 se kam hain to match turant GAME_OVER |
+| F5 | Mobile joystick par haptic feedback nahi | Nice-to-have | `navigator.vibrate()` — tag/explosion moments par |

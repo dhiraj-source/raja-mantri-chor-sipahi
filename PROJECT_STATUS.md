@@ -58,7 +58,7 @@ See `DEVELOPMENT/` for the phase-tracking convention.
 ## Pending
 - **Act before ~2026-10-26**: Render's free PostgreSQL (`rmc-postgres`) expires 30 days after creation (created 2026-09-26). Owner said they will handle this themselves.
 - **Phase 3 (Draw & Guess)**: Milestones 1-3 done (pure engine + full server core + React UI) — **playable end-to-end in a real browser now, in English or Hindi**, verified with headless Chrome. Milestone 4 partial (reconnection hardening + i18n done; spectators/private rooms still open). Milestone 5 remaining: accessibility pass, voice chat integration. See DEVELOPMENT/PHASE_3_DRAW_AND_GUESS/STATUS.md.
-- **Phase 4 (Bomb Tag): fully done and deployed.** No remaining items block real play; see DEVELOPMENT/PHASE_4_BOMB_TAG/STATUS.md for the (non-blocking) known limitations list.
+- **Phase 4 (Bomb Tag): fully done and deployed.** Nothing blocks real play. 5 tracked, non-blocking follow-ups (F1-F5) are listed in `DEVELOPMENT/PHASE_4_BOMB_TAG/STATUS.md` under "Open follow-ups" — each with why it was left and the concrete fix. The most interesting one is **F1**: two players standing on top of each other can stall a round forever, because every bomb transfer resets the full 15s timer.
 
 ## Planned
 - Redis for rooms / queue / reconnect sessions / auth tokens / presence (container runs but is unused). Deliberately NOT started: it is a big refactor (async token store, serializable room + GameState storage, cross-server WebSocket broadcast) that only matters for restarts or running more than one API server. Login tokens and rooms are lost on an API restart until then.
