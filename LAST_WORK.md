@@ -1,62 +1,81 @@
 # LAST WORK
 
-## Latest (RMC-0033 — Phase 4 (Bomb Tag) Milestone 4: mobile virtual joystick)
+## Latest (RMC-0034/0035 — Phase 4 (Bomb Tag) Milestone 5 + deployed to production)
 
-Continued straight on from Milestone 3 (owner said "PROCEED", no further specifics) — checked
-the phase's own remaining checklist and found Milestone 4 originally scoped three things
-(reconnection hardening, i18n, mobile joystick), but two of those were already done earlier
-(reconnection hardening in Milestone 2/RMC-0031, i18n in Milestone 3/RMC-0032). So this session's
-work was just the joystick.
+Owner said "PROCEED" (continuing autonomously), then after Milestones 3-4 were reported done,
+said "each everything complete krke deploy krdo" (finish everything and deploy). This session did
+both: finished Milestone 5 (polish), then deployed all of Phase 4 and verified it live.
 
-**What was built:**
-- `apps/web/src/bomb-tag/VirtualJoystick.tsx`: on-screen draggable joystick using Pointer Events
-  (same technique Draw & Guess's `Canvas.tsx` already uses for drawing — handles mouse and touch
-  identically). Sends the exact same `onInput` callback the keyboard hook already uses, so both
-  input sources are interchangeable — the server just remembers whichever direction arrived last,
-  no merge/priority logic needed since a real player only uses one method at a time.
-- Shown only on touch-capable devices (`isTouchDevice()`) so keyboard-only desktop players never
-  see it.
-- The circle-clamp math (`clampToRadius`) is a small pure function, same pattern as Milestone 3's
-  `computeDirection` — pulled out specifically to stay unit-testable without a DOM harness.
+### Milestone 5 (RMC-0034) — polish
+- **Audio**: 3 new sounds (`BT_TAG`, `BT_EXPLODE`, `BT_ROUND_WIN`) + reused the existing `WIN`
+  sound (and its "Victory!" voice-line) for match-win. Since the server never sends discrete
+  events over the wire for this mode (only continuous snapshots — a deliberate Milestone-1
+  design choice), `btClientState.ts` now diffs consecutive `BombTagGameView` snapshots
+  (`diffGameEvents`) to derive `TAG`/`EXPLODE`/`ROUND_WIN`/`MATCH_WIN` events client-side.
+- **Visual**: a small transient banner ("💣 You have the bomb!" / "💀 Eliminated!") shown only to
+  the affected player.
+- **Accessibility**: an `aria-live="polite"` status region narrating a short status line, since
+  the arena canvas has no inherent screen-reader content.
+- 8 new unit tests for the event-diffing logic (the tricky part — correctly distinguishing a real
+  bomb hand-change from a round-start assignment, etc.).
 
-**Verified in a real browser** (extended `scripts/ui-check-bt.mjs`): this surfaced a genuine gap
-in the *test harness*, not the app — Chrome's `Emulation.setDeviceMetricsOverride({mobile:true})`
-does NOT by itself set `navigator.maxTouchPoints`/`ontouchstart` (needed a separate
-`Emulation.setTouchEmulationEnabled` CDP call). Without it, the joystick correctly didn't render
-(matching real behavior), which looked like a bug at first until traced to the incomplete test
-setup. Fixed the script. After that, confirmed the joystick renders on mobile viewport, dragged it
-with a real CDP mouse-drag (fires genuine Pointer Events), and confirmed via screenshot that both
-the stick visual and the player's on-screen position moved.
+### Deploy (RMC-0034 continued + RMC-0035)
+- **Found and fixed the Dockerfile gap before pushing**, not after a crash this time:
+  `apps/api/Dockerfile` was still missing the `COPY --from=build` pair for
+  `packages/bomb-tag-engine` — the exact same shape as the RMC-0029 incident. Fixed, then
+  verified for real: built the actual production image locally, ran it as a container, and ran
+  **all three game modes'** smoke tests against that container — all passed.
+- Committed all of Phase 4 (58 files, RMC-0030 through RMC-0034) in one commit, pushed. Both
+  Render and Vercel auto-deployed; watched both through to completion via their CLIs.
+- **Verified against the real live production server, not just deploy status**: ran all three
+  game modes' full smoke-test suites directly against `wss://rmc-api-etep.onrender.com/ws`.
+- **This surfaced 3 more real, pre-existing Render infrastructure characteristics** (confirmed
+  none are Bomb Tag bugs by first reproducing the exact same code passing cleanly and near-
+  instantly against local Docker):
+  1. A client-initiated WebSocket close (or the server's own abuse-protection `terminate()`)
+     takes **~10-20 seconds** to propagate through Render's reverse proxy to the *other* party —
+     near-instant locally. Any check waiting for one client to notice another's disconnect needed
+     a much longer timeout for production.
+  2. The close code for oversized-payload/rate-limit protection is Render's own proxy-level
+     `1006` in production, not the application's clean `1009` — protection works either way, code
+     just differs.
+  3. Two independent WebSocket clients' messages have no guaranteed relative arrival order at the
+     server (confirmed `MatchmakingService.join()` itself is correctly order-faithful; the test's
+     assumption about network delivery order was the actual bug).
+- Fixed `apps/api/scripts/smoke-ws.mjs` accordingly: longer justified timeouts (each with a
+  comment recording the measured real delay), accepted both close codes, order-independent queue
+  check, and a `SKIP_GRACE_CHECK` path (matching the existing `smoke-dg.mjs` precedent) for the
+  vote-flow sections that need production's real 60s grace period. Verified this fix twice: full
+  pass against local Docker with short timers (confirming no regression), full pass against
+  production with the skip flag.
+- **Final confirmation**: web (Vercel) and API `/health` (Render) both return 200; all three game
+  modes' smoke-test suites pass cleanly against the real production server.
 
-**Also verified**: full repo build + lint + entire existing test suite (440 tests: 37 engine + 50
-draw-guess-engine + 39 bomb-tag-engine + 170 api + 144 web) all pass. 4 new tests
-(`virtualJoystick.test.ts`).
+**All 5 milestones of Phase 4 are complete. Bomb Tag is now live in production**, alongside RMCS
+and Draw & Guess — not just "should be," confirmed by actually exercising it against the real
+deployed server, the same standard this project has held to for every prior deploy.
 
-## RMC-0032 / RMC-0031 / RMC-0030 (earlier sessions — Phase 4 Milestones 1-3)
+## RMC-0033 / RMC-0032 / RMC-0031 / RMC-0030 (earlier — Phase 4 Milestones 1-4)
 See CHANGELOG.md for full detail. Not repeated here.
 
 ## Current phase
 - **PHASE 2**: checklist fully DONE. Owner's standing instruction: still open, no new items queued.
 - **PHASE 3** (Draw & Guess): Milestones 1-4 done and deployed to production. Milestone 5 not
   started (accessibility pass, voice chat integration).
-- **PHASE 4** (Bomb Tag): Milestones 1-4 done. **Playable end-to-end in a real browser now, on
-  desktop (keyboard) or mobile (virtual joystick), in English or Hindi.** Milestone 5 (polish:
-  effects/animations, audio hooks, accessibility pass) is the only thing left before deploy.
-  See `DEVELOPMENT/PHASE_4_BOMB_TAG/STATUS.md` for the full checklist.
+- **PHASE 4** (Bomb Tag): **fully COMPLETE and deployed.** All 5 milestones done, live in
+  production, verified end-to-end (real browser, real keyboard/joystick input, real production
+  smoke tests). See `DEVELOPMENT/PHASE_4_BOMB_TAG/STATUS.md` for the full history.
 
 ## Next step
-Owner has been saying "PROCEED" to keep going autonomously through Phase 4's milestones without
-further discussion each time. Following that same pattern, the next reasonable step is:
-1. **Milestone 5** (polish): visual effects for tag/explosion/round-win moments, audio hooks
-   (reusing the existing `SoundPlayer`/mute system rather than inventing a new one — same
-   dependency-injection pattern already used for RMCS/Draw & Guess sounds), an accessibility pass
-   (keyboard-only playability already works via WASD/arrows; screen-reader/color-contrast review
-   still open).
-2. **Deploy**: remembering the RMC-0029 Dockerfile lesson — add `packages/bomb-tag-engine`'s
-   `COPY --from=build` pair to `apps/api/Dockerfile`, verify with a real local Docker
-   build+run+smoke-test before pushing, then watch both Vercel and Render's deploys through to
-   completion and verify against the live server (same rhythm as every prior deploy this project
-   has done).
+No specific instruction yet — Phase 4 was the active work and it's now fully done and deployed.
+Reasonable options for whenever the owner gives direction:
+1. Finish Draw & Guess's own remaining Milestone 5 items (accessibility pass, voice chat
+   integration) — the one other mode with an open milestone.
+2. A new Phase 5 / fourth game mode, if the owner has something in mind.
+3. General polish/maintenance across all three modes (e.g., addressing any of the now-documented
+   Render networking quirks at the *application* level if they ever affect real users, not just
+   test scripts — though there's no evidence yet that they do; disconnect-detection being ~10-20s
+   slower in production than local dev is a minor UX nicety-to-investigate, not a bug).
 
 No blockers. Separately, still open (owner handling it themselves): Render's free PostgreSQL
 expires ~2026-10-26.

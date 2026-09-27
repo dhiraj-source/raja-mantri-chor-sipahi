@@ -1,6 +1,6 @@
 # DEPLOYMENT — LIVE
 
-Ye game ab live hai:
+Ye game ab live hai — **teeno game modes** (Raja Mantri Chor Sipahi, Draw & Guess, Bomb Tag):
 
 - **Web:** https://raja-mantri-chor-sipahi-five.vercel.app (Vercel)
 - **API + WebSocket:** https://rmc-api-etep.onrender.com (Render)
@@ -63,6 +63,21 @@ Vercel par (Production environment):
 | Database "expired" error | Upar wala 30-day section dekho |
 
 ---
+
+## Render ki networking ke kuch quirks (RMC-0035 me pata chale, dobara verify karte waqt yaad rakhna)
+
+Render ke reverse-proxy/load-balancer ka behavior local Docker/dev se thoda alag hai — ye app ka
+bug nahi hai, bas production-verification scripts likhte/chalate waqt dhyan rakhna:
+
+- Ek client apna WebSocket khud band kare (ya server `terminate()` kare kisi abuse ki wajah se),
+  to doosri party tak ye baat pahunchne me **~10-20 second** tak lag sakte hain (local Docker par
+  turant hota hai). Real users ke liye normal gameplay me farq nahi padta (disconnect-detection
+  thoda slow bas), lekin koi bhi smoke-test script isi hisab se lamba timeout rakhe.
+- Oversized-payload/rate-limit se connection band ho to code app ka clean `1009` nahi, Render ke
+  proxy ka abrupt `1006` milta hai — protection dono jagah kaam karta hai, bas code/timing alag.
+- Do alag WebSocket clients ke messages ka server tak exact order kabhi guaranteed nahi hota.
+
+`apps/api/scripts/smoke-ws.mjs` inhi teeno ke liye adapt ho chuka hai (dekho CHANGELOG.md RMC-0035).
 
 ## Local development me kuch nahi badla
 

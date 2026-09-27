@@ -1275,3 +1275,42 @@ None (reuses existing `BT_GAME_VIEW` snapshots — no new events, just client-si
 - Same limitations carried over from RMC-0033: no movement interpolation, no chat/voice for this mode, no auto-end-early for a 1-vs-nobody match (host can already end manually).
 - Not yet deployed as of this entry — that's the very next step.
 
+# RMC-0035
+
+## Feature
+Phase 4 — Bomb Tag: deployed to production and verified live. **All 5 milestones of Phase 4 are complete; this closes out the phase.**
+
+## Status
+COMPLETE. Bomb Tag is now live in production alongside RMCS and Draw & Guess.
+
+## What changed
+- Committed all of Phase 4 (58 files, RMC-0030 through RMC-0034) in one commit, pushed to `main`. Both Render (API) and Vercel (web) auto-deployed via their GitHub integrations; watched both through to completion via their respective CLIs rather than assuming success from the push alone.
+- **Verified against the real live production server, not just deploy status**: ran all three game modes' full smoke-test suites (`smoke-ws.mjs`, `smoke-dg.mjs`, `smoke-bt.mjs`) directly against `wss://rmc-api-etep.onrender.com/ws` — all pass, including Bomb Tag's reconnect scenario.
+- **Three more real, pre-existing Render infrastructure characteristics surfaced during this verification** (none are Bomb Tag bugs, none are new regressions — all three were confirmed by first reproducing the exact same code passing cleanly and near-instantly against a local Docker container before concluding it was an environment difference, not a functional one):
+  1. A client-initiated WebSocket close (or the server's own `socket.terminate()` for abuse protection) takes **~10-20 seconds** to actually propagate through Render's reverse proxy to the *other* party — near-instant on local Docker/dev. Any check that waits for one client to notice another's disconnect (presence updates, room-state connected flags, abuse-protection connection drops) needed a much longer timeout for production runs.
+  2. The close code that reaches the client for oversized-payload/rate-limit abuse protection is Render's own proxy-level `1006` (abrupt closure) in production, rather than the application's clean `1009` — the underlying protection still works either way, just the code/timing differs by environment.
+  3. Two independent WebSocket clients sending nearly-simultaneous `QUICK_MATCH` requests have no guaranteed relative arrival order at the server (confirmed `MatchmakingService.join()` itself is correctly order-faithful — `this.queue.push(entry)` preserves whatever order the server actually receives requests in; the test's assumption that "sent first" implies "arrives first" across two independent sockets was the actual bug, exposed by Docker's slightly higher network jitter and occasionally by production's real internet path).
+- Fixed `apps/api/scripts/smoke-ws.mjs` accordingly: longer, justified timeouts on the affected waits (each with a comment recording the measured real-world delay), accepted both `1009` and `1006` as valid "connection closed due to abuse protection" signals, made the queue-name check order-independent, and added a `SKIP_GRACE_CHECK` path (mirroring the existing `smoke-dg.mjs` precedent) for the two vote-flow sections that depend on `RECONNECT_GRACE_MS`/`VOTE_DURATION_MS` — production intentionally runs a 60-second grace period for real users, and that shouldn't be shortened just to make a verification script faster; those sections are already thoroughly covered by `rooms.service.test.ts` (45 tests) and `voting.test.ts` (8 tests), plus a full local-Docker run with short timers as part of this same verification.
+- Final confirmation: both live URLs return 200 (web via Vercel, `/health` via Render), and all three smoke-test suites pass cleanly against the real production server.
+
+## Reason
+Owner said "each everything complete krke deploy krdo" (finish everything and deploy). This is the deploy step, done with the same rigor as every previous production deploy in this project: not just watching deploy status go green, but actually exercising the live server with real WebSocket clients across all three game modes before calling it done.
+
+## Database
+None (no schema changes).
+
+## API
+None (deploy of already-built code; the only code change in this entry is to a dev-only smoke-test script, not shipped in the runtime image).
+
+## WebSocket
+None (verification only).
+
+## Tests
+- No new automated tests (this entry is deploy + verification). `smoke-ws.mjs`'s fixes were themselves verified twice: once against a fresh local Docker container with short grace/vote timers (full pass, confirming no regression in the underlying logic), and once against the real production server with `SKIP_GRACE_CHECK=1` (full pass).
+- Full repo build + lint + entire test suite (448 tests) re-run clean before and after these script-only changes.
+
+## Known limitations
+- The three Render-infrastructure characteristics documented above (disconnect-detection latency, proxy-level close codes, cross-connection message ordering) are now understood and worked around in the smoke-test tooling, but are themselves outside this project's control (they're properties of Render's reverse-proxy/load-balancer, not of this codebase) — worth remembering for any future production-verification work on any game mode, not just Bomb Tag.
+- Phase 4's own remaining "nice to have" items (documented per-milestone above): no mobile haptic feedback, no movement interpolation, no chat/voice for this mode, no auto-end-early for a 1-vs-nobody match. None block real play.
+- Next: owner's call on what to build next (Draw & Guess's own remaining Milestone 5 items — accessibility pass, voice chat — or a new Phase 5, or something else entirely).
+

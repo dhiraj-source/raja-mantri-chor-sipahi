@@ -1,9 +1,9 @@
 # PHASE 4 — Bomb Tag (fast multiplayer arena game)
 
 ## Status
-**IN PROGRESS** (started 2026-09-27). Owner ne poora spec diya (48 sections) aur "full hand to
-think and implement" — Phase 3 jaisa hi, milestones me tod kar banaya ja raha hai. Jab tak
-checklist ke saare items DONE na ho jayen, is file ko "COMPLETE" mat likhna.
+**COMPLETE** (2026-09-27). Saare 5 milestones done + **live production par deploy + verify ho
+chuka hai**. Owner ne poora spec diya (48 sections) aur "full hand to think and implement", phir
+"each everything complete krke deploy krdo" — Phase 3 jaisa hi, milestones me tod kar banaya gaya.
 
 ## Maksad
 Teesra game mode: **Bomb Tag** — chhota, chaotic, real-time multiplayer arena game. Ek player ke
@@ -35,7 +35,7 @@ rounds ka hota hai (default: 3 round-wins se match jeeto). Existing RMCS aur Dra
 | 3 | React UI: arena canvas, keyboard controls, HUD, lobby/menu integration, round/match results | ☑ DONE | RMC-0032 |
 | 4 | Mobile controls (virtual joystick) — reconnection hardening (host transfer, disconnect-forfeit) already done in Milestone 2 (RMC-0031); i18n (English + Hindi) already done in Milestone 3 (RMC-0032) | ☑ DONE | RMC-0033 |
 | 5 | Polish: effects/animations, audio hooks, accessibility pass | ☑ DONE | RMC-0034 |
-| — | *(deploy + verify live, jaisa Phase 3 me hua)* | ⏳ IN PROGRESS | — |
+| — | *(deploy + verify live, jaisa Phase 3 me hua)* | ☑ DONE | RMC-0034/0035 |
 
 ## Notes
 - Full 48-point spec owner ke message me hai (is session ke conversation history me) — is file
@@ -103,3 +103,23 @@ already Milestone 2/3 me ho chuke the, isliye Milestone 4 ka poora scope yahi th
   `smoke-ws.mjs` me ek pehle se maujood (is session se related nahi) latent race-condition bug
   bhi mila aur fix kiya (do alag WebSocket clients ke beech queue-order par exact-match assertion,
   jo Docker ke network timing me expose hua — order-independent check me badal diya).
+
+## Deploy + live verification (RMC-0034/0035) — **Bomb Tag ab production me live hai**
+- Commit + push kiya (58 files, saare 5 milestones). Render (API) aur Vercel (web) dono ne auto-deploy
+  kiya — dono CLI se poll karke confirm kiya "live"/"Ready".
+- **Real live production server ke against teeno game modes ka smoke test chalaya** (sirf status
+  check nahi): RMCS, Draw & Guess, Bomb Tag — sab pass, including reconnect scenario.
+- Isi production-verification ke dauran 3 aur real, pre-existing (Bomb Tag se related nahi) Render
+  infra characteristics mile aur `smoke-ws.mjs` ko unke liye adapt kiya:
+  1. Client-initiated WebSocket close (ya server `terminate()`) Render ke reverse-proxy se doosre
+     party tak pahunchne me **~10-20s** tak lagte hain (local Docker par turant). Disconnect-detection
+     par depend karne wale saare waits ka timeout badhaya.
+  2. Oversized-payload/rate-limit abuse-protection ka close-code production me app ka clean 1009
+     nahi, Render ke proxy ka abrupt **1006** hota hai — dono ko valid signal maan kar accept kiya.
+  3. Do independent WebSocket clients ke messages ka server tak pahunchne ka exact order kabhi
+     guaranteed nahi hota — queue-name check ko order-independent banaya.
+  Koi bhi cheez app ka real bug nahi thi — sabka independent local-Docker (short timers) run se
+  confirm hua ki wahi exact code turant/cleanly pass hota hai. Sirf test-script production-network
+  ke liye adapt karna tha (jaisa RMC-0029 me `SKIP_GRACE_CHECK` se pehle bhi hua tha).
+- Final health check: web (Vercel) 200, API `/health` (Render) 200, teeno smoke suites live server
+  ke against clean pass.
