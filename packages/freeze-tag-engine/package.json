@@ -1,5 +1,5 @@
 {
-  "name": "@rmc/bomb-tag-engine",
+  "name": "@rmc/freeze-tag-engine",
   "version": "0.1.0",
   "private": true,
   "main": "dist/index.js",

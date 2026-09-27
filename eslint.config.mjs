@@ -26,9 +26,11 @@ export default tseslint.config(
     // GameEngine pure rahna chahiye: koi framework import nahi. Draw & Guess aur Bomb Tag ke
     // engines bhi waisi hi pure packages hain (RMCS engine se alag, par same rule apply hoti hai).
     files: [
+      'packages/arena-kit/src/**/*.ts',
       'packages/game-engine/src/**/*.ts',
       'packages/draw-guess-engine/src/**/*.ts',
       'packages/bomb-tag-engine/src/**/*.ts',
+      'packages/freeze-tag-engine/src/**/*.ts',
     ],
     rules: {
       'no-restricted-imports': [

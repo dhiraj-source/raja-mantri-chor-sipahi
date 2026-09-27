@@ -9,9 +9,14 @@ import {
 import { findTagTarget } from './collision';
 import { DEFAULT_BOMB_TAG_CONFIG, type BombTagConfig } from './config';
 import { BombTagError } from './errors';
-import { generateSpawnPoints, type Vec2 } from './geometry';
-import { stepPosition } from './movement';
-import { pickIndex, shuffle, type RandomSource } from './random';
+import {
+  generateSpawnPoints,
+  pickIndex,
+  shuffle,
+  stepPosition,
+  type RandomSource,
+  type Vec2,
+} from '@rmc/arena-kit';
 
 export { BOMB_TAG_PHASES, type BombTagPhase };
 

@@ -1,4 +1,4 @@
-import { distance, type Vec2 } from './geometry';
+import { distance, type Vec2 } from '@rmc/arena-kit';
 
 export interface Circle {
   id: string;

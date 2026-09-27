@@ -1,5 +1,5 @@
 {
-  "name": "@rmc/bomb-tag-engine",
+  "name": "@rmc/arena-kit",
   "version": "0.1.0",
   "private": true,
   "main": "dist/index.js",
@@ -8,9 +8,5 @@
     "build": "tsc -b",
     "test": "vitest run",
     "clean": "tsc -b --clean"
-  },
-  "dependencies": {
-    "@rmc/arena-kit": "0.1.0",
-    "@rmc/shared-types": "0.1.0"
   }
 }
