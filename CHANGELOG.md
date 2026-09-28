@@ -1361,3 +1361,59 @@ No schema, HTTP or protocol changes. `MAX_INPUT_MESSAGES_PER_SECOND` is a new op
 - **Two players standing exactly on top of each other can stall a round**: the bomb bounces between them every transfer-cooldown (~400ms) and each transfer resets the bomb timer, so it never reaches zero. Found while writing the UI check (the bot parked on the host and the timer sat at 15s indefinitely). Not changed here — it's emergent from the existing tag rules and real players separate naturally — but worth revisiting if it ever shows up in real play (e.g. don't reset the full timer on every transfer, or scale the reset down).
 - The beep plays for everyone in the room, not only the bomb holder (deliberate — shared tension), and respects the existing global mute.
 
+
+# RMC-0037..0040
+
+## Feature
+Phase 5 — **Freeze Tag**, the fourth game mode: one player is IT and freezes others by touching them; frozen players cannot move until a teammate touches them to thaw. IT wins by freezing everyone; the players win if anyone is still free when the round timer runs out.
+
+## Status
+COMPLETE — all milestones done, deployed and verified live.
+
+## What changed
+
+### RMC-0037 — Milestone 0 + 1: shared `arena-kit` and the pure engine
+- **`packages/arena-kit` (new shared package)**: geometry (vectors, distance, arena clamping, spawn-point generation), movement (`stepPosition`) and deterministic random were about to be copied a *third* time. They now live in one small package that Bomb Tag and Freeze Tag both consume. Deliberately only the invariant pure math moved — every game keeps its own config, state machine and collision semantics, so changing one game's rules still cannot affect another. Bomb Tag was fully re-verified after the move (unit tests + real-server smoke test) before anything else was built on top.
+- **`packages/freeze-tag-engine`**: IT selection (server-side only), freeze on IT contact, unfreeze by a teammate, round timer, win conditions and per-player round stats.
+- **`packages/shared-types/src/freeze-tag.ts`**: the `FT_*` wire protocol. Like Bomb Tag, this mode has no hidden information, so a single shared view goes to everyone rather than a per-viewer masked one.
+
+Two engine design decisions worth recording:
+- **Fixed tick order is what actually answers the spec's race-condition questions.** Everything happens inside one deterministic `tick()`: movement → unfreeze (only players who were already frozen when the tick began) → freeze → win check. Nothing can happen "simultaneously" because there is only ever one writer. Unfreeze runs before freeze specifically so a player cannot be frozen and thawed in the same tick, which keeps IT's tag meaningful.
+- **`removePlayer` genuinely drops the player from the roster**, unlike Bomb Tag's fixed roster which caused the ghost-revival bug in RMC-0031. That class of bug is structurally impossible here.
+
+A test caught a real design flaw before it shipped: if the last opponent simply *left*, IT was being declared the winner without having frozen anybody. IT now only wins when at least one opponent is still present and all of them are frozen; if everyone leaves, the round just ends.
+
+### RMC-0038 — Milestone 2: server core
+- `apps/api/src/freeze-tag/` with its own in-memory room map, wired into the existing shared `/ws` gateway via `FT_*` events. No second socket and **no second tick loop**: the Bomb Tag ticker was generalized so one 20Hz interval now steps every active room of both real-time games.
+- Server owns everything that matters — IT selection, positions, frozen state, collision, timer, win condition. A client can never claim it tagged someone; it only sends movement input, and a frozen player's input is ignored server-side so "frozen can't move" is enforced rather than trusted.
+- `FT_INPUT` gets the same generous anti-flood allowance `BT_INPUT` got in RMC-0036, so fast movement can never trip the abuse limiter and disconnect a player mid-game.
+- Found while writing the smoke test: the disconnect/reconnect wiring had silently not been applied (a scripted multi-line replace matched nothing), so a disconnecting IT never handed over. Caught only because the smoke test drives a real server.
+
+### RMC-0039 — Milestone 3: React UI
+- `apps/web/src/freeze-tag/` following the Bomb Tag module's shape; added as the fourth mode-select card and mounted at App level so reload/reconnect lands back in the right room.
+- Arena draws IT with a pulsing red glow, frozen players as cracked ice, and rings the local player in white; drawing runs in a `requestAnimationFrame` loop so the glow stays smooth at 60fps while snapshots arrive at 20Hz.
+- HUD shows active/frozen counts, an `mm:ss` timer that turns urgent under 10s, and a role banner telling the player exactly what to do (IT / RUN / FROZEN). Result screen shows the winner plus per-player freeze/unfreeze/times-frozen stats.
+- Reused rather than duplicated: `VirtualJoystick` and `useKeyboardInput` come straight from the Bomb Tag module, and the shared socket/type unions were widened exactly as they were for the previous two modes.
+
+### RMC-0040 — Milestone 4: polish + deploy prep
+- Five new sounds (freeze, unfreeze, countdown tick, GO, lose) plus reuse of the existing `WIN` sound, driven by the same client-side snapshot-diffing pattern Bomb Tag uses, since the server only ever sends continuous state.
+- Both Dockerfile `COPY` pairs (`arena-kit`, `freeze-tag-engine`) added **before** pushing — the RMC-0029/0034 lesson applied proactively. While doing this, also found that `apps/api/package.json` had never declared `@rmc/bomb-tag-engine` as a dependency (it resolved only via workspace hoisting); all four engine packages are now declared properly.
+
+## Database / API
+No schema changes. No HTTP changes — WebSocket only, like the other real-time modes.
+
+## WebSocket
+New `FT_*` events on the existing `/ws` gateway: `FT_CREATE_ROOM`, `FT_JOIN_ROOM`, `FT_LEAVE_ROOM`, `FT_READY`, `FT_UPDATE_SETTINGS`, `FT_KICK_PLAYER`, `FT_START_GAME`, `FT_INPUT`, `FT_END_GAME`, `FT_RETURN_TO_LOBBY` (client→server); `FT_ROOM_STATE`, `FT_GAME_VIEW`, `FT_ERROR` (server→client). `FT_GAME_VIEW` is broadcast at tick rate; `FT_ROOM_STATE` only on roster changes.
+
+## Tests
+- 27 engine tests (IT selection, spawn separation, freeze, unfreeze, IT-can't-unfreeze, thaw immunity, frozen-can't-move, both win conditions, the freeze-vs-timer tie, disconnect/IT hand-off, no-ghost removal) and 5 proximity tests.
+- 19 service tests (lobby, settings clamping, start validation, timer expiry, disconnect/reconnect, host controls).
+- 11 web reducer tests including snapshot-diffing for freeze/unfreeze/IT-change/round-over.
+- New `smoke-ft.mjs` against a real server: plays a real round — IT tags a runner, the frozen player proves it cannot move while spamming input, a teammate rescues them, then IT disconnects and hand-off is verified.
+- New `ui-check-ft.mjs` in real headless Chrome: a bot IT chases the host until the UI shows FROZEN, a second bot rescues them until it shows RUN again, with timer format and `aria-live` status asserted, then Hindi.
+- **521 tests pass.** All four game modes' smoke suites pass against a freshly built production Docker image, and again against live production after deploy.
+
+## Known limitations
+- Two players can in principle stand on a frozen teammate and repeatedly re-freeze/thaw them; the thaw-immunity window bounds how fast this can happen, and it has not shown up as a problem in play.
+- No client-side movement interpolation (arena redraws per 20Hz snapshot), consistent with Bomb Tag.
+- Stats are per-round only and are not persisted to the accounts/XP system; the spec explicitly said not to duplicate the statistics system, and wiring rounds into account progression would be a separate decision.

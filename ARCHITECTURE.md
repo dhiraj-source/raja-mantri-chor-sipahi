@@ -402,6 +402,38 @@ A fast, real-time multiplayer arena mode, built **alongside** RMCS and Draw & Gu
     needing any new server event. An `aria-live` status region covers the arena canvas's lack of
     inherent screen-reader content.
 
+## Freeze Tag — fourth game mode, Phase 5 (RMC-0037..0040)
+
+IT chases; touching a player freezes them; a teammate touching a frozen player thaws them. IT
+wins by freezing everyone, players win if anyone is still free when the timer ends.
+
+- **`packages/arena-kit` (shared)**: the real-time primitives both arena games need — vectors,
+  distance, arena clamping, spawn-point generation, `stepPosition`, deterministic random. Created
+  when this code was about to be copied a third time. **Only invariant pure math lives here**;
+  every game keeps its own config, state machine and collision semantics, so a rules change in
+  one mode still cannot affect another. Bomb Tag was re-verified end-to-end after being moved onto it.
+- **`packages/freeze-tag-engine`**: player statuses are `ACTIVE | IT | FROZEN`, exactly one IT at
+  a time, chosen server-side. Config covers `tagRadius`, `unfreezeRadius`, `thawImmunityMs`,
+  `unfreezeCooldownMs`, `roundDurationMs` — no magic numbers scattered around.
+- **Fixed tick order is the actual answer to multiplayer race conditions here.** One deterministic
+  `tick()` per room does: movement → unfreeze (only players already frozen when the tick began) →
+  freeze → win check. There is only ever one writer, so nothing is truly "simultaneous". Unfreeze
+  runs before freeze so a player can't be frozen and thawed within one tick, which keeps IT's tag
+  meaningful; a freeze landing on the same tick the timer expires counts, so IT wins that tie.
+- **`removePlayer` really removes the player** from the roster, unlike Bomb Tag's fixed roster
+  which produced the ghost-revival bug (RMC-0031). If IT leaves, the engine picks a new IT
+  immediately; if too few players remain, the round ends.
+- IT only wins when at least one opponent is still *present* and all of them are frozen — if
+  everyone quits, IT doesn't get a free win. (A test caught this before it shipped.)
+- Server-side wiring reuses everything: same `/ws` gateway with `FT_*` events, and the Bomb Tag
+  tick loop was generalized so **one 20Hz interval steps both real-time games'** rooms. `FT_INPUT`
+  shares `BT_INPUT`'s generous anti-flood allowance (RMC-0036) so fast movement can't disconnect
+  a player.
+- Client mirrors the Bomb Tag module: reducer + socket hook, canvas arena in a
+  `requestAnimationFrame` loop, and the *same* `VirtualJoystick`/`useKeyboardInput` components
+  rather than copies. Sounds are derived by diffing consecutive snapshots, since the server sends
+  continuous state and never discrete events.
+
 ## Web app structure (RMC-0004/0007)
 
 - net/clientState.ts: pure reducer = mirror of server messages (no game logic).

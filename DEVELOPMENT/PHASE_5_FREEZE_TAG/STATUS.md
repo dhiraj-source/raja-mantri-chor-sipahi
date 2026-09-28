@@ -1,7 +1,7 @@
 # PHASE 5 — Freeze Tag (real-time chase/rescue arena game)
 
 ## Status
-**IN PROGRESS** (started 2026-09-27). Owner ne poora spec diya (33 sections) aur kaha: pehle
+**COMPLETE** (2026-09-28). Saare milestones done; deploy neeche. Owner ne poora spec diya (33 sections) aur kaha: pehle
 existing project audit karo, jo reuse ho sakta hai wo reuse karo, phir banao. Jab tak checklist ke
 saare items DONE na ho jayen, is file ko "COMPLETE" mat likhna.
 
@@ -52,7 +52,7 @@ teeno **bilkul nahi todhne** hain.
 | 1 | Foundation: pure `freeze-tag-engine` (IT selection, freeze/unfreeze, timer, win conditions, stats) + shared-types wire protocol | ☑ DONE | RMC-0037 |
 | 2 | Server core: NestJS module + shared tick-loop/gateway wiring, disconnect/reconnect | ☑ DONE | RMC-0038 |
 | 3 | React UI: arena canvas (IT/active/frozen visuals), HUD, lobby/menu integration, result screen | ☑ DONE | RMC-0039 |
-| 4 | Polish: sounds (tag/freeze/unfreeze/countdown/win/lose), effects, mobile joystick, i18n | ☐ TODO | — |
+| 4 | Polish: sounds (freeze/unfreeze/countdown/GO/win/lose), effects, mobile joystick, i18n | ☑ DONE | RMC-0040 |
 | — | *(deploy + verify live, jaisa Phase 4 me hua)* | ☐ TODO | — |
 
 ## Notes

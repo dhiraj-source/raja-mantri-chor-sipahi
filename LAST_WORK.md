@@ -1,75 +1,70 @@
 # LAST WORK
 
-## Latest (RMC-0036 — Bomb Tag critical bugfix + 2 enhancements, deployed)
+## Latest (RMC-0037..0040 — Phase 5: Freeze Tag, built and deployed)
 
-Owner ne report kiya: **"move karte hi doosra player jeet jaata hai"**, aur saaf kaha ki UI patch
-nahi, asli root cause dhoondho. Phir do enhancements maange (bomb ke paas jaate hi warning/pulse,
-aur aakhri 5 second me tez hoti beep) aur deploy.
+Owner ne 33-section spec diya: "pehle existing project audit karo, jo reuse ho sakta hai reuse
+karo, phir Freeze Tag banao" — phir "complete it and deploy too".
 
-### Bug: root cause (engine bilkul theek tha)
-Pehle asli repro banaya — 2 WebSocket clients, poora match, har state change ka timestamped log.
-- 20 movement-messages/sec par **bug reproduce hi nahi hua** — yahi sabse bada clue tha.
-- Joystick-speed (~100/sec) par turant reproduce ho gaya, aur poori chain dikh gayi:
+### Audit ka nateeja (kya reuse hua, kya naya bana)
+Reuse: wahi ek `/ws` gateway (naye `FT_*` events), sessions/reconnect, Bomb Tag ka room/lobby
+pattern, `VirtualJoystick` + `useKeyboardInput` (bilkul wahi components, copy nahi), sound/mute,
+i18n, mode-select, aur anti-flood limiter ka movement-exception.
 
-```
-BT_INPUT bahut tez (joystick drag / tez keys)
-   → gateway ki global anti-flood limit (40/sec — turn-based modes ke liye banayi thi) paar
-   → socket.terminate()
-   → gateway ke liye ye ek normal disconnect hai
-   → BombTagService.setConnected(false)
-   → Bomb Tag me koi grace nahi (jaan-boojh kar, kyunki bomb timer hi ~15s ka hai)
-   → turant forfeit → ek hi player zinda → ROUND_OVER
-```
-Captured timeline: socket t=5890ms par band (code 1006), t=5891ms par doosra player winner —
-jabki bomb me abhi ~14 second bache the. Matlab movement ne kabhi `alive`, score, ya round-end
-ko haath nahi lagaya; **transport layer player ko maar raha tha**.
+Naya: `@rmc/arena-kit` (shared math), `@rmc/freeze-tag-engine` (rules), `FT_*` wire protocol,
+server module, aur UI module.
 
-**Fix (server — asli jagah):** `BT_INPUT` ab apni alag generous limit par ginta hai
-(`MAX_INPUT_MESSAGES_PER_SECOND`, default 150/sec). Baaki har message ki limit waisi hi sakht
-(verify kiya: spam-protection test abhi bhi connection kaatta hai). Frame classification sirf
-chhote frames parse karta hai (BT_INPUT ~45 bytes) aur asli `event` field dekhta hai — chat me
-"BT_INPUT" likh dene se dheeli limit nahi milti.
+### Ek architectural decision (owner ko bataya tha)
+Geometry/movement/random **teesri baar** copy ho raha tha, isliye use ek chhote shared package
+`@rmc/arena-kit` me nikaal diya. Sirf invariant pure math gaya — har game ke apne rules
+(config/state/collision ka matlab) alag hi rahe, taaki ek game badalne se doosra na toote.
+Risk tha ki isme Bomb Tag (live game) ko chhoona padega, isliye wo sabse pehla alag step rakha
+aur Bomb Tag ko poora dobara verify kiya (unit + smoke) tabhi aage badha.
 
-**Fix (client — flood ka source):** `VirtualJoystick` har `pointermove` par bhej raha tha
-(60-120/sec) jabki server 50ms me ek hi baar padhta hai. Ab 50ms throttle; stick ka visual phir
-bhi har frame par smooth chalta hai, aur press/release hamesha turant jaate hain.
+### Game rules (server-authoritative)
+IT chhoo kar freeze karta hai; frozen hil nahi sakta; koi doosra active player use chhoo kar
+thaw kar sakta hai; IT thaw nahi kar sakta. IT jeeta = sab frozen; players jeete = timer khatam
+hone tak koi bacha. Client kabhi ye nahi keh sakta ki "maine X ko freeze kiya" — server khud
+collision check karta hai, aur frozen player ka input server par hi ignore hota hai.
 
-### Enhancements
-1. **Proximity warning/pulse** — bomb holder ke around pulsing red danger ring (arena canvas me),
-   paas aane wale ko red border + "⚠️ Bomb is near you — RUN!", holder ko amber border +
-   "💣 Pass it — run!". Sab client-side, existing snapshot se derive — koi protocol change nahi.
-2. **Aakhri 5 second me tez hoti beep** — gap ~550ms (5s par) se ghat kar ~110ms (0 ke paas),
-   aakhri ~1.5s me ooncha "panic" pitch. HUD timer bhi isi window me bada + red + pulse.
-   `Arena` ab `requestAnimationFrame` loop me draw karta hai taaki pulse 60fps smooth rahe.
+### Race conditions ka asli jawab (spec ne poocha tha)
+Sab kuch ek hi deterministic `tick()` ke andar hota hai, fix order me:
+`movement → unfreeze (sirf wo jo tick shuru hone se pehle frozen the) → freeze → win check`.
+Do cheezein "ek saath" ho hi nahi sakti kyunki writer ek hi hai. Unfreeze pehle isliye taaki ek
+hi tick me freeze-phir-thaw ka thrash na ho. Freeze aur timer-end ek saath aayein to IT jeeta
+(freeze pehle process hua).
+
+### Bomb Tag ki galti se seekha
+`removePlayer` sach me roster se player hata deta hai — Bomb Tag ke fixed roster ki wajah se
+chala gaya player agle round me "bhoot" ban jaata tha (RMC-0031). Yahan wo bug structurally
+possible hi nahi.
+
+### Jo bugs pakde gaye (dono real tests se, likhte waqt nahi)
+1. **Test ne design flaw pakda**: aakhri opponent sirf *chala jaaye* to IT ko jeet mil rahi thi,
+   bina kisi ko freeze kiye. Ab IT tabhi jeetta hai jab kam se kam ek opponent maujood ho aur
+   sab frozen hon.
+2. **Smoke test ne wiring gap pakda**: disconnect/reconnect ka code silently apply hi nahi hua
+   tha (scripted multi-line replace kuch match nahi kiya), isliye IT disconnect hone par naya IT
+   nahi banta tha. Sirf asli server ke against test karne se hi pata chala.
+3. Deploy se pehle `apps/api/package.json` me `@rmc/bomb-tag-engine` kabhi declare hi nahi tha
+   (sirf workspace hoisting se chal raha tha) — chaaron engines ab theek se declared hain.
 
 ### Verification
-- 16 naye tests (6 API: frame classification + limit behavior; 10 web: beep timing curve + proximity).
-- `smoke-bt.mjs` me bug ka **seedha regression check**: 100 tez movement messages ke baad socket
-  OPEN, phase PLAYING, sab players alive, koi winner nahi.
-- `ui-check-bt.mjs`: bot asli server positions se host ka peecha karta hai jab tak warning DOM me
-  na dikhe, phir door jaata hai taaki timer 5s tak gir sake, aur urgent-timer styling assert hoti hai.
-- 464 tests pass; teeno modes production Docker image par pass; deploy ke baad live server par bhi pass.
-
-### Ek nayi known limitation (abhi fix nahi ki)
-Do players bilkul ek doosre ke upar khade rahein to bomb har ~400ms par transfer hoti rehti hai
-aur **har transfer timer reset kar deta hai** — wo round kabhi khatam nahi hota. UI check likhte
-waqt mila. Existing tag-rules ka natural nateeja hai aur asli players alag ho jaate hain, isliye
-abhi chhoda hai; zaroorat pade to seedha fix = transfer par poora timer reset na karna.
-
-## RMC-0030..0035 (Phase 4: Bomb Tag banaya aur deploy kiya)
-See CHANGELOG.md. Not repeated here.
+- 521 tests (27 engine + 5 proximity + 19 service + 11 web reducer naye).
+- `smoke-ft.mjs`: asli round — IT tag karke freeze, frozen player input spam karke bhi nahi
+  hilta, saathi rescue karta hai, phir IT disconnect par hand-off.
+- `ui-check-ft.mjs`: asli headless Chrome me bot IT host ka peecha karke FROZEN dikhata hai,
+  doosra bot rescue karke RUN wapas laata hai; timer format + aria-live assert; Hindi bhi.
+- **Chaaron modes** production Docker image par pass, aur deploy ke baad live server par bhi.
 
 ## Current phase
-- **PHASE 2**: checklist fully DONE.
-- **PHASE 3** (Draw & Guess): Milestones 1-4 done and deployed. Milestone 5 open (accessibility
-  pass, voice chat integration).
-- **PHASE 4** (Bomb Tag): **COMPLETE, deployed, aur post-launch bug bhi fix ho chuka hai.**
+- **PHASE 2/3/4**: done (Phase 3 ka Milestone 5 — accessibility pass + voice — abhi bhi open).
+- **PHASE 5** (Freeze Tag): **COMPLETE aur live**.
 
 ## Next step
-Koi pending kaam nahi. Owner ke direction ka intezaar. Reasonable options:
+Koi pending kaam nahi. Owner ke direction ka intezaar. Options:
 1. Draw & Guess ka baaki Milestone 5 (accessibility pass, voice chat).
-2. Bomb Tag ki upar wali "overlapping players se round stall" wali limitation, agar real play me
-   dikhe.
-3. Koi naya Phase 5 / naya game mode.
+2. Bomb Tag ka F1 follow-up (do players ek doosre par khade rahein to round stall — dekho
+   `DEVELOPMENT/PHASE_4_BOMB_TAG/STATUS.md` ka "Open follow-ups" table).
+3. Koi naya phase / naya game mode.
 
 Separately, still open (owner handling it themselves): Render's free PostgreSQL expires ~2026-10-26.

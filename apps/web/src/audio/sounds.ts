@@ -20,7 +20,12 @@ export type SoundName =
   | 'BT_EXPLODE'
   | 'BT_ROUND_WIN'
   | 'BT_BEEP'
-  | 'BT_BEEP_URGENT';
+  | 'BT_BEEP_URGENT'
+  | 'FT_FREEZE'
+  | 'FT_UNFREEZE'
+  | 'FT_COUNTDOWN'
+  | 'FT_GO'
+  | 'FT_LOSE';
 
 /** Sab awaazen code me hi hain (koi audio file nahi). Har ek 1 second se chhoti. */
 export const SOUNDS: Record<SoundName, readonly Tone[]> = {
@@ -85,6 +90,32 @@ export const SOUNDS: Record<SoundName, readonly Tone[]> = {
   BT_BEEP: [{ freq: 880, start: 0, duration: 0.06, type: 'square', volume: 0.1 }],
   /** Aakhri ~1.5 second ka zyada tez/ooncha beep (panic wala feel). */
   BT_BEEP_URGENT: [{ freq: 1320, start: 0, duration: 0.07, type: 'square', volume: 0.14 }],
+  // ---- Freeze Tag (Phase 5) ----
+  /** Koi jam gaya — neeche girta hua "shhh-clink" wala ehsaas. */
+  FT_FREEZE: [
+    { freq: 1200, start: 0, duration: 0.08, type: 'sine', volume: 0.12 },
+    { freq: 700, start: 0.07, duration: 0.14, type: 'sine', volume: 0.12 },
+    { freq: 420, start: 0.18, duration: 0.18, type: 'triangle', volume: 0.1 },
+  ],
+  /** Koi chhoot gaya — upar chadhta hua khushnuma sa. */
+  FT_UNFREEZE: [
+    { freq: 520, start: 0, duration: 0.08, type: 'triangle', volume: 0.12 },
+    { freq: 780, start: 0.08, duration: 0.1, type: 'triangle', volume: 0.12 },
+    { freq: 1040, start: 0.18, duration: 0.16, type: 'triangle', volume: 0.12 },
+  ],
+  /** Round shuru hone se pehle 3-2-1 ka tick. */
+  FT_COUNTDOWN: [{ freq: 660, start: 0, duration: 0.08, type: 'square', volume: 0.1 }],
+  /** "GO!" — round shuru. */
+  FT_GO: [
+    { freq: 880, start: 0, duration: 0.1, type: 'square', volume: 0.14 },
+    { freq: 1320, start: 0.1, duration: 0.22, type: 'square', volume: 0.14 },
+  ],
+  /** Round haar gaye. */
+  FT_LOSE: [
+    { freq: 440, start: 0, duration: 0.15, type: 'sawtooth', volume: 0.14 },
+    { freq: 330, start: 0.15, duration: 0.18, type: 'sawtooth', volume: 0.14 },
+    { freq: 220, start: 0.33, duration: 0.3, type: 'sawtooth', volume: 0.12 },
+  ],
 };
 
 /**

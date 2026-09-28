@@ -9,9 +9,10 @@ See `DEVELOPMENT/` for the phase-tracking convention.
 - **PHASE 2 (Bots, Mixed Rooms, Voice): IN PROGRESS** — `DEVELOPMENT/PHASE_2_BOTS_AND_VOICE/STATUS.md`
 - **PHASE 3 (Draw & Guess — new game mode): IN PROGRESS** — `DEVELOPMENT/PHASE_3_DRAW_AND_GUESS/STATUS.md`
 - **PHASE 4 (Bomb Tag — new game mode): COMPLETE** — `DEVELOPMENT/PHASE_4_BOMB_TAG/STATUS.md`
+- **PHASE 5 (Freeze Tag — new game mode): COMPLETE** — `DEVELOPMENT/PHASE_5_FREEZE_TAG/STATUS.md`
 
 ## Overall Status
-**LIVE**: https://raja-mantri-chor-sipahi-five.vercel.app (verified working end-to-end in a real browser, real production API) — **all three game modes (Raja Mantri Chor Sipahi, Draw & Guess, and Bomb Tag) are live**, verified against the real production server (all three modes' full smoke-test suites pass against `wss://rmc-api-etep.onrender.com/ws`). Also still fully playable locally (2 browser tabs = 2 players, ya smoke script).
+**LIVE**: https://raja-mantri-chor-sipahi-five.vercel.app (verified working end-to-end in a real browser, real production API) — **all four game modes (Raja Mantri Chor Sipahi, Draw & Guess, Bomb Tag, and Freeze Tag) are live**, verified against the real production server (all four modes' full smoke-test suites pass against `wss://rmc-api-etep.onrender.com/ws`). Also still fully playable locally (2 browser tabs = 2 players, ya smoke script).
 
 ## Completed
 - RMC-0001 Memory/documentation system.
@@ -52,8 +53,10 @@ See `DEVELOPMENT/` for the phase-tracking convention.
 
 - RMC-0036 **Bomb Tag critical bugfix + 2 enhancements (post-launch)**: owner reported "moving my player instantly makes the other player win". Reproduced it for real, then traced it to the transport layer, not the game rules: fast movement input tripped the gateway's global anti-flood limit (40/s, tuned for turn-based modes) → `socket.terminate()` → Bomb Tag's deliberate no-grace disconnect handling → instant forfeit → round over. Fixed by giving `BT_INPUT` its own generous limiter (150/s, everything else stays strict) and throttling the joystick's sends to the server's 50ms tick rate. Also added the two requested enhancements: a pulsing danger ring + "bomb is near you" warning when close to the bomb holder, and an accelerating beep (plus a red, enlarged, pulsing timer) through the last 5 seconds. 16 new tests + a direct regression check in the smoke test; 464 tests total, verified in a real browser and live in production.
 
+- RMC-0037..0040 **Phase 5 — Freeze Tag (fourth game mode), COMPLETE and deployed**: one player is IT and freezes others by touching them; frozen players cannot move until a teammate thaws them. IT wins by freezing everyone, players win if anyone survives the round timer. Built on a new shared `@rmc/arena-kit` package (movement/geometry/spawn/random) so the two real-time games stop duplicating that math — Bomb Tag was moved onto it and fully re-verified first. Reuses the same socket, the same tick loop (now generalized to step both real-time games), the same joystick/keyboard input components, and the same sound/i18n systems. A test caught a real design flaw before shipping: if the last opponent simply left, IT was being handed a win without freezing anyone. 521 tests, real-browser verified in English and Hindi, all four modes pass against a production Docker image and against live production.
+
 ## In Progress
-- Nothing — Phase 4 is complete and deployed. Waiting on the owner for direction on what's next.
+- Nothing — Phase 5 (Freeze Tag) is complete and deployed. Waiting on the owner for direction on what's next.
 
 ## Pending
 - **Act before ~2026-10-26**: Render's free PostgreSQL (`rmc-postgres`) expires 30 days after creation (created 2026-09-26). Owner said they will handle this themselves.
@@ -71,8 +74,8 @@ Database: PostgreSQL 16 (Docker) via pg — accounts, game_history; migrations i
 Run locally (3 terminals, folder D:\ANJALI\GAME): `npm run db:up` (once, Docker Desktop must be running), `npm run dev:api`, `npm run dev:web` -> http://localhost:5173 (open two tabs = two players, or one tab + "Play with bots" for solo). Full UI check: `npm run ui:check` (with the API and web dev server running). Phone on the same WiFi: open http://<PC-IP>:5173 (RMC-0016); allow ports 5173 and 3000 in Windows Firewall (Private networks).
 Realtime: WebSocket (path /ws)
 Temporary state: in API memory (Redis 7 in Docker, NOT used yet)
-Tests: Vitest (engine 37, draw-guess-engine 50 (RMC-0024), bomb-tag-engine 39 (RMC-0030), api 176 incl. real-PostgreSQL/cors/bot/draw-guess/bomb-tag/input-limit tests (RMC-0025/0027/0031/0036), web 162 incl. voice/voice-line/animal-sound/draw-guess/bomb-tag/bomb-alert tests (RMC-0026/0032/0033/0034/0036) = 464 total). Plus real-server smoke tests: `npm run smoke -w @rmc/api` (RMCS), `npm run smoke:dg -w @rmc/api` (Draw & Guess), `npm run smoke:bt -w @rmc/api` (Bomb Tag) — all three also verified against the live production server (RMC-0035; RMCS needs `SKIP_GRACE_CHECK=1` and `HTTP_URL`/`WS_URL` pointed at production). Plus real-headless-Chrome UI checks: `npm run ui:check` (RMCS), `node scripts/ui-check-dg.mjs` (Draw & Guess), `node scripts/ui-check-bt.mjs` (Bomb Tag).
-Deployment: LIVE at https://raja-mantri-chor-sipahi-five.vercel.app (web, Vercel) + https://rmc-api-etep.onrender.com (API, Render) — **all three game modes**. apps/api/Dockerfile + render.yaml (reference) + vercel.json + .github/workflows/ci.yml — see DEPLOYMENT.md (also documents 3 Render-networking quirks found in RMC-0035: disconnect-detection latency, proxy-level close codes, cross-connection message ordering). Local smoke test: run the API with `RECONNECT_GRACE_MS=1500 VOTE_DURATION_MS=1500`, then `npm run smoke -w @rmc/api`.
+Tests: Vitest (engine 37, draw-guess-engine 50, bomb-tag-engine 26, arena-kit 13 (RMC-0037), freeze-tag-engine 27 (RMC-0037), api 195 incl. real-PostgreSQL/cors/bot/draw-guess/bomb-tag/freeze-tag/input-limit tests, web 173 incl. voice/audio/draw-guess/bomb-tag/freeze-tag tests = 521 total). Plus real-server smoke tests: `npm run smoke -w @rmc/api` (RMCS), `npm run smoke:dg -w @rmc/api` (Draw & Guess), `npm run smoke:bt -w @rmc/api` (Bomb Tag), `npm run smoke:ft -w @rmc/api` (Freeze Tag) — all four also verified against the live production server (RMC-0035; RMCS needs `SKIP_GRACE_CHECK=1` and `HTTP_URL`/`WS_URL` pointed at production). Plus real-headless-Chrome UI checks: `npm run ui:check` (RMCS), `node scripts/ui-check-dg.mjs` (Draw & Guess), `node scripts/ui-check-bt.mjs` (Bomb Tag), `node scripts/ui-check-ft.mjs` (Freeze Tag).
+Deployment: LIVE at https://raja-mantri-chor-sipahi-five.vercel.app (web, Vercel) + https://rmc-api-etep.onrender.com (API, Render) — **all four game modes**. apps/api/Dockerfile + render.yaml (reference) + vercel.json + .github/workflows/ci.yml — see DEPLOYMENT.md (also documents 3 Render-networking quirks found in RMC-0035: disconnect-detection latency, proxy-level close codes, cross-connection message ordering). Local smoke test: run the API with `RECONNECT_GRACE_MS=1500 VOTE_DURATION_MS=1500`, then `npm run smoke -w @rmc/api`.
 Lint: ESLint 9 + typescript-eslint
 
 ## Game Roles
@@ -104,4 +107,6 @@ None known. UI was checked in a real headless Chrome (390px phone + desktop); vo
 - (was: no commit yet — fixed, see Pending above for the push/deploy steps still left)
 
 ## Last Change
-RMC-0036 — Bomb Tag: fixed the owner-reported "movement instantly ends the round" bug (anti-flood limiter was killing fast-moving players' sockets) + added proximity danger warning and accelerating last-5-seconds beep
+RMC-0037..0040 — Phase 5: Freeze Tag built and deployed (fourth game mode); extracted a shared `arena-kit` package so the two real-time games stop duplicating movement/geometry code
+
+(previous) RMC-0036 — Bomb Tag: fixed the owner-reported "movement instantly ends the round" bug (anti-flood limiter was killing fast-moving players' sockets) + added proximity danger warning and accelerating last-5-seconds beep

@@ -108,6 +108,42 @@ export function App() {
     }
   }, [bt.state.recentEvents, play]);
 
+  // Freeze Tag: server sirf snapshots bhejta hai, isliye ftClientState khud diff karke ye events
+  // nikaalta hai (Bomb Tag jaisa hi pattern).
+  const heardFtEvent = useRef(-1);
+  const ftItId = ft.state.game?.itId ?? null;
+  const ftWinner = ft.state.game?.winner ?? null;
+  useEffect(() => {
+    for (const event of ft.state.recentEvents) {
+      if (event.key <= heardFtEvent.current) continue;
+      heardFtEvent.current = event.key;
+      if (event.type === 'FROZEN') play('FT_FREEZE');
+      else if (event.type === 'UNFROZEN') play('FT_UNFREEZE');
+      else if (event.type === 'ROUND_OVER') {
+        // Jeete ya haare — IT ke liye ulta hota hai.
+        const iAmIt = ftItId !== null && ftItId === playerId;
+        const iWon = ftWinner === 'IT' ? iAmIt : !iAmIt;
+        play(iWon ? 'WIN' : 'FT_LOSE');
+      }
+    }
+  }, [ft.state.recentEvents, ftItId, ftWinner, playerId, play]);
+
+  // Freeze Tag ka 3-2-1 countdown tick + "GO!".
+  const ftCountdownEndsAt = ft.state.game?.countdownEndsAt ?? null;
+  const ftPhase = ft.state.game?.phase ?? null;
+  useEffect(() => {
+    if (ftPhase !== 'COUNTDOWN' || ftCountdownEndsAt === null) return;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const remaining = ftCountdownEndsAt - Date.now();
+    // Har baaki bachi hui poori second par ek tick, aur bilkul aakhir me "GO!".
+    for (let sec = Math.floor(remaining / 1000); sec >= 1; sec--) {
+      const delay = remaining - sec * 1000;
+      if (delay >= 0) timers.push(setTimeout(() => play('FT_COUNTDOWN'), delay));
+    }
+    if (remaining > 0) timers.push(setTimeout(() => play('FT_GO'), remaining));
+    return () => timers.forEach(clearTimeout);
+  }, [ftPhase, ftCountdownEndsAt, play]);
+
   const inviteCount = invites.length;
   const heardInvites = useRef(0);
   useEffect(() => {
